@@ -1,3 +1,4 @@
+
 library(shiny)
 library(shinyWidgets)
 library(shinyjs)
@@ -8,6 +9,10 @@ library(ggplot2)
 library(pool)
 library(shinythemes)
 library(digest)
+
+icon <- function(name, ...) {
+  shiny::icon(name, ...)
+}
 
 # --------------------- Database Setup ---------------------
 db_pool <- dbPool(
@@ -20,6 +25,109 @@ db_pool <- dbPool(
 # Password hashing function
 simple_hash <- function(text) {
   digest::digest(text, algo = "sha256")
+}
+
+# Order status constants
+ORDER_STATUSES <- list(
+  PENDING = "Pending",
+  PROCESSING = "Processing",
+  TO_SHIP = "To Ship",
+  SHIPPED = "Shipped",
+  COMPLETED = "Completed",
+  CANCELLED = "Cancelled"
+)
+
+# Function to get next status
+get_next_status <- function(current_status) {
+  switch(current_status,
+         "Pending" = ORDER_STATUSES$PROCESSING,
+         "Processing" = ORDER_STATUSES$TO_SHIP,
+         "To Ship" = ORDER_STATUSES$SHIPPED,
+         "Shipped" = ORDER_STATUSES$COMPLETED,
+         current_status)
+}
+# Add these functions near other helper functions (around line 200)
+
+# Function to format date properly - UPDATED FIXED VERSION
+# Function to format date properly - FIXED CONSISTENT FORMAT
+format_date <- function(date_str) {
+  tryCatch({
+    if(is.null(date_str) || is.na(date_str) || date_str == "") {
+      return("")
+    }
+    
+    # If it's already POSIXct
+    if(inherits(date_str, "POSIXct") || inherits(date_str, "POSIXt")) {
+      return(format(date_str, "%Y-%m-%d %I:%M:%S %p", tz = Sys.timezone()))
+    }
+    
+    # Convert to POSIXct - handle various formats
+    dt <- as.POSIXct(date_str, tz = "UTC")
+    if(is.na(dt)) {
+      dt <- as.POSIXct(date_str)
+    }
+    
+    # Format consistently for ALL tables
+    return(format(dt, "%Y-%m-%d %I:%M:%S %p", tz = Sys.timezone()))
+  }, error = function(e) {
+    return(date_str)
+  })
+}
+
+# Function to format numbers with commas - UPDATED
+format_number <- function(x, digits = 0) {
+  if(is.numeric(x)) {
+    return(formatC(x, format = "f", big.mark = ",", digits = digits))
+  } else if(is.character(x)) {
+    # Try to extract and format numbers from strings
+    num_str <- gsub("[^0-9.-]", "", x)
+    nums <- suppressWarnings(as.numeric(num_str))
+    if(!is.na(nums) && !is.null(nums)) {
+      return(formatC(nums, format = "f", big.mark = ",", digits = digits))
+    }
+  }
+  return(x)
+}
+
+# Function to format currency with commas - UPDATED
+format_currency <- function(x, symbol = "₱") {
+  if(is.numeric(x)) {
+    return(paste0(symbol, formatC(x, format = "f", big.mark = ",", digits = 2)))
+  } else if(is.character(x)) {
+    # Try to extract number from string
+    num_str <- gsub("[^0-9.-]", "", x)
+    num <- suppressWarnings(as.numeric(num_str))
+    if(!is.na(num) && !is.null(num)) {
+      return(paste0(symbol, formatC(num, format = "f", big.mark = ",", digits = 2)))
+    }
+  }
+  return(x)
+}
+
+# Function to format date properly - UPDATED
+format_date <- function(date_str) {
+  tryCatch({
+    # Parse the date and convert to local timezone
+    if(grepl("^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$", date_str)) {
+      # Already in correct format, just ensure timezone
+      dt <- as.POSIXct(date_str, tz = "UTC")
+      format(dt, "%Y-%m-%d %I:%M:%S %p", tz = Sys.timezone())
+    } else {
+      # Try to parse various formats
+      dt <- as.POSIXct(date_str, tz = "UTC")
+      if(is.na(dt)) {
+        dt <- as.POSIXct(date_str)
+      }
+      format(dt, "%Y-%m-%d %I:%M:%S %p", tz = Sys.timezone())
+    }
+  }, error = function(e) {
+    return(date_str)
+  })
+}
+
+# Add this near other helper functions (around line 200)
+myModalDialog <- function(..., options = list(backdrop = 'static', keyboard = FALSE)) {
+  modalDialog(..., options = options)
 }
 
 # Database helper functions with safety wrapper
@@ -593,7 +701,7 @@ product_card <- function(shoe_row) {
         onerror = "this.onerror=null; this.src='default_shoe_image.jpg'"
       ),
       h4(name, style = "margin-top:15px; margin-bottom:10px;"),
-      p(strong(paste0("₱", sprintf("%.2f", price))), 
+      p(strong(paste0("₱", format_number(price))), 
         style = "font-size:20px; color:#1abc9c; margin-bottom:5px;"),
       p(paste0("In Stock: ", stock), 
         class = ifelse(stock > 10, "stock-ok", "stock-low"),
@@ -640,7 +748,7 @@ merge_carts <- function(existing_cart, new_cart) {
   return(merged_cart)
 }
 
-# Helper function for dashboard boxes - UPDATED FOR CONSISTENT SIZE
+# In the dashboard_box function (around line 250), update to:
 dashboard_box <- function(icon_name, value, label, gradient = "background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);") {
   div(
     class = "dashboard-card",
@@ -651,12 +759,12 @@ dashboard_box <- function(icon_name, value, label, gradient = "background: linea
        align-items: center; 
        justify-content: center;
        text-align: center;
-       min-height: 180px;"  # Added fixed height
+       min-height: 180px;"
     ),
     
     div(
       style = "text-align: center; margin-bottom: 10px;",
-      icon(icon_name, style = "font-size: 40px; opacity: 0.9;")
+      shiny::icon(icon_name, style = "font-size: 40px; opacity: 0.9;")
     ),
     
     div(
@@ -669,9 +777,8 @@ dashboard_box <- function(icon_name, value, label, gradient = "background: linea
         display: flex;
         justify-content: center;
         align-items: center;
-        min-height: 50px;"  # Ensure consistent height for value
-      ,
-      value
+        min-height: 50px;",
+      span(class = "dashboard-value", value)
     ),
     
     div(
@@ -680,8 +787,7 @@ dashboard_box <- function(icon_name, value, label, gradient = "background: linea
         font-size: 16px; 
         opacity: 0.9;
         width: 100%;
-        min-height: 20px;"  # Ensure consistent height for label
-      ,
+        min-height: 20px;",
       label
     )
   )
@@ -690,658 +796,77 @@ dashboard_box <- function(icon_name, value, label, gradient = "background: linea
 # --------------------- UI ---------------------
 ui <- fluidPage(
   useShinyjs(),
-  tags$head(tags$style(HTML("
-    /* Base Styles */
-    .shoe-card-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-      gap: 20px;
-      margin-top: 20px;
-    }
-    
-    .card {
-      border:1px solid #ddd; 
-      border-radius:10px; 
-      padding:15px; 
-      text-align:center;
-      transition: transform 0.2s;
-      background: white;
-      display: flex;
-      flex-direction: column;
-      justify-content: space-between;
-      height: 100%;
-      min-height: 400px;
-    }
-    
-    .card:hover {
-      transform: translateY(-5px);
-      box-shadow: 0 8px 16px rgba(0,0,0,0.1);
-    }
-    
-    .card img {
-      border-radius:10px;
-      object-fit: cover;
-      width: 100%;
-      height: 200px;
-      min-height: 200px;
-    }
-    
-    .btn-theme {
-      background-color:#1abc9c; 
-      color:white; 
-      border:none;
-      border-radius: 5px;
-      padding: 8px 15px;
-      cursor: pointer;
-    }
-    
-    /* Fix label accessibility issues */
-    .shiny-input-container label[for] {
-      display: block;
-      margin-bottom: 5px;
-      font-weight: bold;
-    }
-    
-    /* Ensure all inputs have proper IDs */
-    .shiny-bound-input {
-      position: relative;
-    }
-    
-    /* Hide empty labels */
-    label:empty {
-      display: none !important;
-    }
-    
-    /* Ensure password inputs have proper labels */
-    .form-group label[for*='pass'] {
-      cursor: pointer;
-    }
-    
-    /* Registration form specific fixes */
-    #reg_user-label, 
-    #reg_pass-label,
-    #reg_pass_confirm-label {
-      display: block !important;
-    }
-    
-    .btn-theme:hover {
-      background-color:#16a085;
-      color:white;
-      transform: scale(1.05);
-    }
-    
-    .btn-theme:disabled {
-      background-color:#95a5a6;
-      cursor: not-allowed;
-    }
-    
-    /* Password input with eye icon */
-    .password-input-container {
-      position: relative;
-    }
-    
-    .password-toggle {
-      position: absolute;
-      right: 10px;
-      top: 50%;
-      transform: translateY(-50%);
-      background: none;
-      border: none;
-      cursor: pointer;
-      color: #7f8c8d;
-      z-index: 1000;
-    }
-    
-    .password-toggle:hover {
-      color: #34495e;
-    }
-    
-    /* Cart Styles */
-    .cart-badge {
-      position: absolute;
-      top: -8px;
-      right: -8px;
-      background-color: #e74c3c;
-      color: white;
-      border-radius: 50%;
-      padding: 2px 6px;
-      font-size: 12px;
-      font-weight: bold;
-      min-width: 20px;
-      text-align: center;
-    }
-    
-    .cart-container {
-      position: relative;
-      display: inline-flex;
-      align-items: center;
-      cursor: pointer;
-      padding: 8px 15px;
-      background-color: #34495e;
-      border-radius: 5px;
-      margin-right: 10px;
-      transition: background-color 0.3s;
-      min-width: 150px;
-    }
-    
-    .cart-container:hover {
-      background-color: #2c3e50;
-      transform: scale(1.02);
-    }
-    
-    .cart-icon {
-      font-size: 20px;
-      color: white;
-      margin-right: 8px;
-    }
-    
-    /* Dashboard Styles - UPDATED FOR CONSISTENCY */
-    .dashboard-card {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      border-radius: 15px; 
-      padding: 25px; 
-      margin-bottom: 20px; 
-      text-align: center;
-      box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-      color: white;
-      transition: transform 0.3s;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      min-height: 180px;
-    }
-    
-    .dashboard-card:hover {
-      transform: translateY(-5px);
-    }
-    
-    /* Dashboard value and label for consistency */
-    .dashboard-value {
-      font-size: 36px;
-      font-weight: bold;
-      margin: 15px 0;
-      min-height: 50px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      width: 100%;
-    }
-    
-    .dashboard-label {
-      font-size: 16px;
-      opacity: 0.9;
-      min-height: 20px;
-      width: 100%;
-    }
-    
-    /* Status Styles - UPDATED WITH MORE PADDING FOR BETTER SPACING */
-    .status-pending { 
-      background-color: #f39c12 !important;
-      color: white !important;
-      font-weight: bold;
-      padding: 6px 16px !important;  /* Increased from 4px 12px */
-      border-radius: 25px !important; /* Increased from 20px */
-      display: inline-block;
-      text-shadow: none;
-      border: none;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      line-height: 1.2;
-    }
-    
-    .status-processing { 
-      background-color: #3498db !important;
-      color: white !important;
-      font-weight: bold;
-      padding: 6px 16px !important;  /* Increased from 4px 12px */
-      border-radius: 25px !important; /* Increased from 20px */
-      display: inline-block;
-      text-shadow: none;
-      border: none;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      line-height: 1.2;
-    }
-    
-    .status-completed {
-      background-color: #27ae60 !important;
-      color: white !important;
-      font-weight: bold;
-      padding: 6px 16px !important;  /* Increased from 4px 12px */
-      border-radius: 25px !important; /* Increased from 20px */
-      display: inline-block;
-      text-shadow: none;
-      border: none;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      line-height: 1.2;
-    }
-    
-    .status-cancelled { 
-      background-color: #e74c3c !important;
-      color: white !important;
-      font-weight: bold;
-      padding: 6px 16px !important;  /* Increased from 4px 12px */
-      border-radius: 25px !important; /* Increased from 20px */
-      display: inline-block;
-      text-shadow: none;
-      border: none;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      line-height: 1.2;
-    }
-    
-    /* Status Badge Classes (for DataTables) - WITH MORE PADDING */
-    .status-badge {
-      display: inline-block;
-      padding: 6px 16px !important;  /* Increased from 4px 12px */
-      border-radius: 25px !important; /* Increased from 20px */
-      font-weight: bold;
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      white-space: nowrap;
-      text-shadow: none;
-      border: none;
-      line-height: 1.2;
-    }
-    
-    .status-pending-badge {
-      background-color: #f39c12 !important;
-      color: white !important;
-      border-radius: 25px !important; /* Increased from 20px */
-      padding: 6px 16px !important;  /* Increased from 4px 12px */
-    }
-    
-    .status-processing-badge {
-      background-color: #3498db !important;
-      color: white !important;
-      border-radius: 25px !important; /* Increased from 20px */
-      padding: 6px 16px !important;  /* Increased from 4px 12px */
-    }
-    
-    .status-completed-badge {
-      background-color: #27ae60 !important;
-      color: white !important;
-      border-radius: 25px !important; /* Increased from 20px */
-      padding: 6px 16px !important;  /* Increased from 4px 12px */
-    }
-    
-    .status-cancelled-badge {
-      background-color: #e74c3c !important;
-      color: white !important;
-      border-radius: 25px !important; /* Increased from 20px */
-      padding: 6px 16px !important;  /* Increased from 4px 12px */
-    }
-    
-    /* Track ID Badge */
-    .track-id-badge {
-      display: inline-block;
-      background-color: #34495e;
-      color: white;
-      padding: 6px 16px;
-      border-radius: 25px;
-      font-weight: bold;
-      font-family: monospace;
-      letter-spacing: 1px;
-    }
-    
-    /* Order History Modal */
-    .order-history-modal {
-      max-height: 80vh;
-      overflow-y: auto;
-    }
-    
-    .order-summary {
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-      color: white;
-      padding: 15px;
-      border-radius: 10px;
-      margin-bottom: 20px;
-    }
-    
-    .clickable-row {
-      cursor: pointer;
-      transition: background-color 0.3s;
-    }
-    
-    .clickable-row:hover {
-      background-color: #f0f7ff !important;
-    }
-    
-    /* DataTables Styles */
-    .dt-center {
-      text-align: center !important;
-    }
-    
-    /* Logout Button */
-    .logout-btn {
-      margin-left: 10px;
-      background-color: #e74c3c;
-      border: none;
-      color: white;
-      padding: 8px 15px;
-      border-radius: 5px;
-      cursor: pointer;
-      transition: background-color 0.3s;
-    }
-    
-    .logout-btn:hover {
-      background-color: #c0392b;
-    }
-    
-    /* Login Container */
-    #login_container {
-      min-height: 100vh;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-    }
-    
-    .login-box {
-      background: white;
-      padding: 40px;
-      border-radius: 15px;
-      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
-      width: 100%;
-      max-width: 400px;
-    }
-    
-    /* Validation Error */
-    .validation-error {
-      color: #e74c3c;
-      font-size: 12px;
-      margin-top: 5px;
-    }
-    
-    /* Alert styles */
-    .alert-danger {
-      padding: 10px;
-      margin-bottom: 15px;
-      background-color: #f8d7da;
-      border: 1px solid #f5c6cb;
-      border-radius: 5px;
-      color: #721c24;
-    }
-    
-    /* Stock Status */
-    .stock-low {
-      color: #e74c3c !important;
-      font-weight: bold;
-    }
-    
-    .stock-ok {
-      color: #27ae60 !important;
-    }
-    
-    /* Empty Cart */
-    .empty-cart-message {
-      text-align: center;
-      padding: 40px;
-      color: #7f8c8d;
-    }
-    
-    .empty-cart-message i {
-      font-size: 60px;
-      margin-bottom: 20px;
-    }
-    
-    /* AJAX Loading */
-    .AJAX-loading {
-      display: inline-block;
-      width: 20px;
-      height: 20px;
-      border: 3px solid rgba(26, 188, 156, 0.3);
-      border-radius: 50%;
-      border-top-color: #1abc9c;
-      animation: spin 1s ease-in-out infinite;
-    }
-    
-    /* Loading indicator */
-    .loading-indicator {
-      display: inline-block;
-      width: 20px;
-      height: 20px;
-      border: 3px solid rgba(26, 188, 156, 0.3);
-      border-radius: 50%;
-      border-top-color: #1abc9c;
-      animation: spin 1s ease-in-out infinite;
-      margin-right: 10px;
-    }
-    
-    @keyframes spin {
-      to { transform: rotate(360deg); }
-    }
-    
-    @keyframes pulse {
-      0% { transform: scale(1); }
-      50% { transform: scale(1.1); }
-      100% { transform: scale(1); }
-    }
-    
-    /* Modal Header */
-    .modal-header {
-      background-color: #34495e;
-      color: white;
-      border-radius: 10px 10px 0 0;
-    }
-    
-    /* Order Actions Container */
-    .order-actions-container {
-      background: #f8f9fa;
-      padding: 20px;
-      border-radius: 10px;
-      margin-top: 20px;
-      border-left: 5px solid #1abc9c;
-      position: relative;
-    }
-    
-    /* Button loading state */
-    .btn-loading {
-      position: relative;
-      color: transparent !important;
-    }
-    
-    .btn-loading::after {
-      content: '';
-      position: absolute;
-      left: 50%;
-      top: 50%;
-      width: 20px;
-      height: 20px;
-      margin: -10px 0 0 -10px;
-      border: 2px solid rgba(255,255,255,0.3);
-      border-radius: 50%;
-      border-top-color: white;
-      animation: spin 1s ease-in-out infinite;
-    }
-    
-    /* DataTable improvements */
-    .dataTables_wrapper .dataTables_length,
-    .dataTables_wrapper .dataTables_filter,
-    .dataTables_wrapper .dataTables_info,
-    .dataTables_wrapper .dataTables_paginate {
-      padding: 10px 0;
-    }
-    
-    .dataTables_wrapper .dataTables_filter input {
-      border: 1px solid #ddd;
-      border-radius: 4px;
-      padding: 4px 8px;
-    }
-    
-    .bold-row {
-      font-weight: bold !important;
-      background-color: #f8f9fa !important;
-    }
-    
-    /* Alert styles */
-    .alert-warning {
-      padding: 15px;
-      border-radius: 5px;
-      background-color: #fff3cd;
-      border: 1px solid #ffeaa7;
-      margin-bottom: 20px;
-    }
-    
-    /* Image preview styles */
-    .preview-image {
-      border: 2px dashed #ddd;
-      padding: 5px;
-      background-color: #f8f9fa;
-      max-width: 100%;
-      height: auto;
-    }
-    
-    /* Form improvements */
-    .shiny-input-container {
-      margin-bottom: 15px;
-    }
-    
-    .form-group label {
-      font-weight: 600;
-      margin-bottom: 5px;
-      display: block;
-    }
-    
-    /* Responsive tables */
-    @media (max-width: 768px) {
-      .dataTables_wrapper .dataTables_length,
-      .dataTables_wrapper .dataTables_filter {
-        float: none !important;
-        text-align: center !important;
-        margin-bottom: 10px;
-      }
-      .shoe-card-grid {
-        grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      }
-      .dashboard-card {
-        min-height: 160px;
-        padding: 20px;
-      }
-      .dashboard-value {
-        font-size: 28px;
-      }
-    }
-    
-    /* Filter button alignment */
-    .filter-buttons {
-      display: flex;
-      gap: 10px;
-      margin-top: 25px;
-    }
-    
-    /* Order items table */
-    .order-items-table {
-      margin-top: 20px;
-      border-top: 2px solid #eee;
-      padding-top: 15px;
-    }
-    
-    /* Make logout tab button consistent */
-    .navbar-nav > li > a.btn-theme {
-      margin: 8px 15px;
-      color: white;
-      background-color: #e74c3c;
-      border: none;
-    }
-    
-    .navbar-nav > li > a.btn-theme:hover {
-      background-color: #c0392b;
-      color: white;
-    }
-    
-    /* Style for Logout tab */
-    .navbar-nav > li > a[data-value=\"logout_tab\"] {
-      background-color: #e74c3c !important;
-      color: white !important;
-      border-radius: 5px;
-      margin: 8px 5px;
-      padding: 8px 15px !important;
-      transition: background-color 0.3s;
-    }
-    
-    .navbar-nav > li > a[data-value=\"logout_tab\"]:hover {
-      background-color: #c0392b !important;
-      color: white !important;
-    }
-    
-    .navbar-nav > li > a[data-value=\"logout_tab\"] i {
-      margin-right: 8px;
-    }
-    
-    /* Staff Logout tab */
-    .navbar-nav > li > a[data-value=\"staff_logout_tab\"] {
-      background-color: #e74c3c !important;
-      color: white !important;
-      border-radius: 5px;
-      margin: 8px 5px;
-      padding: 8px 15px !important;
-      transition: background-color 0.3s;
-    }
-    
-    .navbar-nav > li > a[data-value=\"staff_logout_tab\"]:hover {
-      background-color: #c0392b !important;
-      color: white !important;
-    }
-  "))),
   
-  tags$script(HTML("
-// Password visibility toggle
-function togglePasswordVisibility(inputId) {
-  var input = document.getElementById(inputId);
-  var toggleBtn = document.querySelector('[data-for=\"' + inputId + '\"]');
+  # Load modern fonts
+  tags$head(
+    # Google Fonts - Inter (modern sans-serif)
+    tags$link(
+      rel = "preconnect",
+      href = "https://fonts.googleapis.com"
+    ),
+    tags$link(
+      rel = "preconnect",
+      href = "https://fonts.gstatic.com",
+      crossorigin = "anonymous"
+    ),
+    tags$link(
+      href = "https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap",
+      rel = "stylesheet"
+    ),
+    
+    # Font Awesome for icons
+    tags$link(
+      rel = "stylesheet",
+      href = "https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css"
+    ),
+    
+    # Load external CSS
+    tags$link(
+      rel = "stylesheet",
+      type = "text/css",
+      href = "styles.css"
+    ),
+    
+    # Add viewport meta for responsive design
+    tags$meta(
+      name = "viewport",
+      content = "width=device-width, initial-scale=1.0"
+    ),
+    
+    # Add favicon (optional)
+    tags$link(
+      rel = "icon",
+      type = "image/x-icon",
+      href = "https://img.icons8.com/color/96/000000/sneakers.png"
+    ),
+    
+    # Add JavaScript for CSS refresh after logout
+    tags$script(HTML("
+      Shiny.addCustomMessageHandler('refreshCSS', function(message) {
+        // Force reapply CSS by toggling a class
+        document.body.classList.remove('css-loaded');
+        setTimeout(function() {
+          document.body.classList.add('css-loaded');
+        }, 10);
+        
+        // Reinitialize password toggles
+        if (typeof initPasswordToggles === 'function') {
+          initPasswordToggles();
+        }
+      });
+    "))
+  ),
   
-  if (input.type === 'password') {
-    input.type = 'text';
-    toggleBtn.innerHTML = '<i class=\"fa fa-eye-slash\"></i>';
-  } else {
-    input.type = 'password';
-    toggleBtn.innerHTML = '<i class=\"fa fa-eye\"></i>';
-  }
-}
-
-// Initialize password toggles
-$(document).ready(function() {
-  // Add eye icons to password inputs
-  function addPasswordToggles() {
-    $('input[type=\"password\"]').each(function() {
-      var inputId = $(this).attr('id');
-      if (inputId && !$(this).parent().find('.password-toggle').length) {
-        $(this).wrap('<div class=\"password-input-container\"></div>');
-        $(this).after(
-          '<button type=\"button\" class=\"password-toggle\" ' +
-          'data-for=\"' + inputId + '\" ' +
-          'onclick=\"togglePasswordVisibility(\\'' + inputId + '\\')\">' +
-          '<i class=\"fa fa-eye\"></i>' +
-          '</button>'
-        );
-      }
-    });
-  }
+  # Load external JavaScript
+  tags$head(
+    tags$script(src = "script.js")
+  ),
   
-  // Initial call
-  addPasswordToggles();
-  
-  // Re-add toggles when inputs are dynamically added
-  $(document).on('shiny:inputchanged', function() {
-    setTimeout(addPasswordToggles, 100);
-  });
-});
-")),
-  
-  # Main UI structure
+  # Rest of your UI code...
   div(id = "login_container", uiOutput("login_ui")),
   hidden(div(id = "main_container", uiOutput("main_ui")))
 )
 
-# --------------------- SERVER ---------------------
 server <- function(input, output, session){
   session_start_time <- reactiveVal(Sys.time())
   
@@ -1360,6 +885,139 @@ server <- function(input, output, session){
     session_initialized = FALSE,
     show_logout_modal = FALSE
   )
+  
+  # ========== ENHANCED NOTIFICATION SYSTEM WITH QUEUING ==========
+  # Queue for notifications to show after modal close
+  notification_queue <- reactiveVal(list())
+  
+  # Function to show toast notifications with queuing
+  show_notification <- function(message, type = "success", duration = 3000, wait_for_modal = FALSE) {
+    # If modal is open and we should wait, add to queue
+    if (wait_for_modal && user_data$modal_open) {
+      current_queue <- notification_queue()
+      current_queue[[length(current_queue) + 1]] <- list(
+        message = message,
+        type = type,
+        duration = duration
+      )
+      notification_queue(current_queue)
+      return()
+    }
+    
+    # Otherwise show immediately
+    session$sendCustomMessage(
+      type = "showToast",
+      message = list(
+        text = message,
+        type = type,
+        duration = duration,
+        waitForModal = wait_for_modal
+      )
+    )
+  }
+  
+  # Function to send number formatting message
+  format_dashboard_numbers <- function() {
+    session$sendCustomMessage("formatNumbers", list())
+  }
+  
+  apply_status_styles <- function() {
+    session$sendCustomMessage("applyStatusStyles", list())
+  }
+  
+  # Function to process notification queue when modal closes
+  process_notification_queue <- function() {
+    queue <- notification_queue()
+    if (length(queue) > 0) {
+      # Process with delay to ensure modal is fully closed
+      delay(300, {
+        for (item in queue) {
+          show_notification(item$message, item$type, item$duration, wait_for_modal = FALSE)
+        }
+        # Clear queue
+        notification_queue(list())
+      })
+    }
+  }
+  
+  # Observe modal state changes
+  observe({
+    # When modal closes, process queued notifications
+    if (!user_data$modal_open && length(notification_queue()) > 0) {
+      process_notification_queue()
+    }
+  })
+  
+  # Add this observer for status updates
+  observe({
+    # Trigger when orders are updated
+    input$mark_processing
+    input$mark_to_ship
+    input$mark_shipped
+    input$mark_completed
+    input$mark_cancelled
+    
+    # Apply status styles
+    apply_status_styles()
+  })
+  
+  # Also add to the order success modal
+  observeEvent(input$make_order_btn, {
+    # After showing order success modal
+    delay(200, {
+      apply_status_styles()
+    })
+  })
+  
+  # Fix add to cart modal layout
+  observeEvent(input$show_cart_modal, {
+    delay(200, {
+      session$sendCustomMessage("fixModalLayout", list())
+    })
+  })
+  
+  # Add this observer to handle the cancel button
+  observeEvent(input$cancel_add_cart, {
+    removeModal()
+    modal_state$is_open <- FALSE
+    modal_state$shoe_id <- NULL
+    modal_state$processing <- FALSE
+    user_data$modal_open <- FALSE
+    current_modal_shoe_id(NULL)
+  })
+  
+  # Function to show JavaScript alert-style notification
+  show_js_alert <- function(title, message, type = "info") {
+    session$sendCustomMessage(
+      type = "showAlert",
+      message = list(
+        title = title,
+        text = message,
+        icon = type
+      )
+    )
+  }
+  
+  # Function to send number formatting message
+  format_dashboard_numbers <- function() {
+    session$sendCustomMessage("formatNumbers", list())
+  }
+  
+  # Observe cart changes for notifications
+  observe({
+    # Trigger when cart changes
+    user_data$cart_trigger
+    
+    if (user_data$cart_trigger > 0 && length(user_data$cart) > 0) {
+      # Send cart update notification
+      session$sendCustomMessage(
+        type = "cartUpdated",
+        message = list(count = length(user_data$cart))
+      )
+    }
+  })
+  
+  # ========== END NOTIFICATION SYSTEM ==========
   
   modal_state <- reactiveValues(
     is_open = FALSE,
@@ -1383,18 +1041,51 @@ server <- function(input, output, session){
     orders = 0
   )
   
+  # Order refresh trigger
+  order_refresh_trigger <- reactiveVal(0)
+  
   # --------------------- Login UI ---------------------
   render_login_ui <- function() {
     output$login_ui <- renderUI({
       tags$div(
         class = "login-box",
-        h2("PJM Shoe Ordering System", style="color:#2c3e50;text-align:center;margin-bottom:30px; font-weight:bolder;"),
-        actionButton("login_cust", "Login as Customer", width = '100%', 
-                     class="btn-theme", style="margin-bottom:15px; height:50px; font-size:16px;"),
-        actionButton("login_staff", "Login as Staff", width = '100%', 
-                     class="btn-theme", style="margin-bottom:15px; height:50px; font-size:16px;"),
-        actionButton("register_btn", "Register an Account", width = '100%', 
-                     class="btn-theme", style="height:50px; font-size:16px;")
+        style = "text-align: center;",
+        tags$div(
+          class = "login-title-container",
+          icon("shoe-prints", style = "font-size: 36px;"),
+          h2("PJM SHOE ORDERING SYSTEM", style = "color:#2c3e50; margin:0;")
+        ),
+        p("Welcome! Please select your login option", style = "color:#666; margin:30px 0;"),
+        
+        tags$div(
+          class = "login-buttons-container",
+          actionButton("login_cust", 
+                       tags$div(
+                         icon("user", style = "margin-right:10px;"),
+                         "Login as Customer"
+                       ), 
+                       width = '100%', 
+                       class = "btn-theme", 
+                       style = "margin-bottom:15px; height:50px; font-size:16px;"),
+          
+          actionButton("login_staff", 
+                       tags$div(
+                         icon("user-tie", style = "margin-right:10px;"),
+                         "Login as Staff"
+                       ), 
+                       width = '100%', 
+                       class = "btn-theme", 
+                       style = "margin-bottom:15px; height:50px; font-size:16px;"),
+          
+          actionButton("register_btn", 
+                       tags$div(
+                         icon("user-plus", style = "margin-right:10px;"),
+                         "Register an Account"
+                       ), 
+                       width = '100%', 
+                       class = "btn-theme", 
+                       style = "height:50px; font-size:16px;")
+        )
       )
     })
     
@@ -1405,36 +1096,118 @@ server <- function(input, output, session){
   
   render_login_ui()
   
-  # --------------------- Registration (CUSTOMER ONLY) ---------------------
   observeEvent(input$register_btn, {
     output$login_ui <- renderUI({
       tags$div(
-        class = "login-box",
-        h3("Register Customer Account", style="color:#2c3e50;text-align:center;margin-bottom:20px;"),
-        p("Create a customer account to start shopping", style="text-align:center;color:#7f8c8d;margin-bottom:20px;"),
-        div(
-          tags$label("Username", `for` = "reg_user"),
-          textInput("reg_user", label = NULL, placeholder = "Enter username (min 3 characters)")
+        class = "login-box registration-modal",  # Changed to registration-modal
+        style = "text-align: center; max-height: 90vh; overflow: hidden;",
+        
+        # Scrollable container
+        tags$div(
+          class = "registration-scroll-container",
+          style = "max-height: 70vh; overflow-y: auto; padding-right: 10px;",
+          
+          h3("Create Customer Account"),
+          p("Register to start shopping for shoes", style = "color: #666; margin-bottom: 25px;"),
+          
+          div(
+            class = "form-group",
+            tags$label("Username", `for` = "reg_user"),
+            textInput(
+              "reg_user", 
+              label = NULL, 
+              placeholder = "Choose a username (min 3 characters)",
+              width = "100%"
+            )
+          ),
+          
+          div(
+            class = "form-group",
+            tags$label("Password", `for` = "reg_pass"),
+            tags$div(
+              class = "password-input-wrapper",
+              passwordInput(
+                "reg_pass", 
+                label = NULL, 
+                placeholder = "Create a password (min 4 characters)",
+                width = "100%"
+              ),
+              tags$button(
+                class = "password-toggle-btn",
+                type = "button",
+                icon("eye"),
+                onclick = "togglePasswordVisibility(this)"
+              )
+            )
+          ),
+          
+          div(
+            class = "form-group",
+            tags$label("Confirm Password", `for` = "reg_pass_confirm"),
+            tags$div(
+              class = "password-input-wrapper",
+              passwordInput(
+                "reg_pass_confirm", 
+                label = NULL, 
+                placeholder = "Re-enter your password",
+                width = "100%"
+              ),
+              tags$button(
+                class = "password-toggle-btn",
+                type = "button",
+                icon("eye"),
+                onclick = "togglePasswordVisibility(this)"
+              )
+            )
+          ),
+          
+          # Hidden role field
+          tags$div(
+            style = "display: none;",
+            selectInput(
+              "reg_role", 
+              "Role", 
+              choices = c("Customer"), 
+              selected = "Customer"
+            )
+          ),
+          
+          tags$div(
+            style = "background: rgba(230, 57, 70, 0.1); padding: 12px; border-radius: 8px; margin: 15px 0;",
+            icon("info-circle", style = "color: #e63946; margin-right: 8px;"),
+            tags$span(
+              "Note: All registrations are for Customer accounts only", 
+              style = "color: #666; font-size: 14px;"
+            )
+          ),
+          
+          uiOutput("reg_validation"),
+          
+          actionButton(
+            "register_account", 
+            tags$div(
+              icon("user-plus", style = "margin-right: 10px;"),
+              "Create Account"
+            ), 
+            class = "btn-theme", 
+            width = "100%", 
+            style = "margin-top: 20px; height: 50px; font-size: 16px;"
+          ),
+          
+          br(), br()
         ),
-        div(
-          tags$label("Password", `for` = "reg_pass"),
-          passwordInput("reg_pass", label = NULL, placeholder = "Enter password (min 4 characters)")
-        ),
-        div(
-          tags$label("Confirm Password", `for` = "reg_pass_confirm"),
-          passwordInput("reg_pass_confirm", label = NULL, placeholder = "Re-enter password")
-        ),
-        # Hidden role field - always Customer
-        tags$div(style="display:none;",
-                 selectInput("reg_role", tags$label("Role", `for` = "reg_role"), 
-                             choices=c("Customer"), selected="Customer")
-        ),
-        p("Role: Customer (Staff accounts can only be created by administrators)", 
-          style="color:#3498db;font-style:italic;margin-bottom:15px;"),
-        uiOutput("reg_validation"),
-        actionButton("register_account", "Register as Customer", class="btn-theme", width="100%", style="margin-top:10px;"),
-        br(), br(),
-        actionButton("back_login", "Back to Login", class="btn-theme", width="100%")
+        
+        # Back button outside scrollable area
+        actionButton(
+          "back_login", 
+          tags$div(
+            icon("arrow-left", style = "margin-right: 10px;"),
+            "Back to Login"
+          ), 
+          class = "btn-theme", 
+          width = "100%",
+          style = "margin-top: 15px; background: linear-gradient(135deg, #666, #888);"
+        )
       )
     })
   })
@@ -1474,36 +1247,81 @@ server <- function(input, output, session){
   
   observeEvent(input$back_login, { render_login_ui() })
   
+  
+  
+  
   observeEvent(input$register_account, {
     req(input$reg_user, input$reg_pass, input$reg_pass_confirm, input$reg_role)
     
     if (nchar(trimws(input$reg_user)) < 3) {
-      showModal(modalDialog(
+      showModal(myModalDialog(
         title = "Validation Error",
         "Username must be at least 3 characters.",
         easyClose = TRUE,
         footer = modalButton("OK")
       ))
+      runjs("
+  setTimeout(function() {
+    // Fix modal centering
+    $('.modal').css('display', 'flex');
+    $('.modal').css('align-items', 'center');
+    $('.modal').css('justify-content', 'center');
+    
+    // Fix logout tab scrolling
+    $('#logout_tab, #staff_logout_tab').css({
+      'max-height': 'calc(100vh - 200px)',
+      'overflow-y': 'auto'
+    });
+  }, 100);
+")
       return()
     }
     
     if (input$reg_pass != input$reg_pass_confirm) {
-      showModal(modalDialog(
+      showModal(myModalDialog(
         title = "Validation Error",
         "Passwords do not match.",
         easyClose = TRUE,
         footer = modalButton("OK")
       ))
+      runjs("
+  setTimeout(function() {
+    // Fix modal centering
+    $('.modal').css('display', 'flex');
+    $('.modal').css('align-items', 'center');
+    $('.modal').css('justify-content', 'center');
+    
+    // Fix logout tab scrolling
+    $('#logout_tab, #staff_logout_tab').css({
+      'max-height': 'calc(100vh - 200px)',
+      'overflow-y': 'auto'
+    });
+  }, 100);
+")
       return()
     }
     
     if (nchar(input$reg_pass) < 4) {
-      showModal(modalDialog(
+      showModal(myModalDialog(
         title = "Validation Error",
         "Password must be at least 4 characters.",
         easyClose = TRUE,
         footer = modalButton("OK")
       ))
+      runjs("
+  setTimeout(function() {
+    // Fix modal centering
+    $('.modal').css('display', 'flex');
+    $('.modal').css('align-items', 'center');
+    $('.modal').css('justify-content', 'center');
+    
+    // Fix logout tab scrolling
+    $('#logout_tab, #staff_logout_tab').css({
+      'max-height': 'calc(100vh - 200px)',
+      'overflow-y': 'auto'
+    });
+  }, 100);
+")
       return()
     }
     
@@ -1513,7 +1331,7 @@ server <- function(input, output, session){
         "INSERT INTO users (username, password, role) VALUES (?, ?, ?)",
         params = list(trimws(input$reg_user), simple_hash(input$reg_pass), "Customer")
       )
-      showModal(modalDialog(
+      showModal(myModalDialog(
         title = "Success",
         "Registration complete! Please login as a customer.",
         easyClose = TRUE,
@@ -1521,12 +1339,26 @@ server <- function(input, output, session){
       ))
       render_login_ui()
     }, error = function(e) {
-      showModal(modalDialog(
+      showModal(myModalDialog(
         title = "Error",
         "Username already exists!",
         easyClose = TRUE,
         footer = modalButton("OK")
       ))
+      runjs("
+  setTimeout(function() {
+    // Fix modal centering
+    $('.modal').css('display', 'flex');
+    $('.modal').css('align-items', 'center');
+    $('.modal').css('justify-content', 'center');
+    
+    // Fix logout tab scrolling
+    $('#logout_tab, #staff_logout_tab').css({
+      'max-height': 'calc(100vh - 200px)',
+      'overflow-y': 'auto'
+    });
+  }, 100);
+")
     })
   })
   
@@ -1535,18 +1367,57 @@ server <- function(input, output, session){
     output$login_ui <- renderUI({
       tags$div(
         class = "login-box",
-        h3("Customer Login", style="color:#2c3e50;text-align:center;margin-bottom:20px;"),
+        style = "text-align: center;",
+        h3("Customer Login", class = "customer-login-title"),  # ADDED CLASS
+        p("Enter your credentials to access your account", style = "color: #666; margin-bottom: 25px;"),
+        
         div(
+          class = "form-group",
           tags$label("Username", `for` = "cust_user"),
-          textInput("cust_user", label = NULL, placeholder = "Enter username")
+          textInput("cust_user", 
+                    label = NULL, 
+                    placeholder = "Enter your username",
+                    width = "100%")
         ),
+        
+        # In the Login UI sections, update password inputs:
         div(
+          class = "form-group",
           tags$label("Password", `for` = "cust_pass"),
-          passwordInput("cust_pass", label = NULL, placeholder = "Enter password")
+          tags$div(
+            class = "password-input-wrapper",
+            passwordInput("cust_pass", 
+                          label = NULL, 
+                          placeholder = "Enter your password",
+                          width = "100%"),
+            tags$button(
+              class = "password-toggle-btn",
+              type = "button",
+              icon("eye"),
+              onclick = "togglePasswordVisibility(this)"
+            )
+          )
         ),
-        actionButton("cust_login_btn", "Login", class="btn-theme", width="100%", style="margin-top:10px;"),
+        
+        actionButton("cust_login_btn", 
+                     tags$div(
+                       icon("sign-in-alt", style = "margin-right: 10px;"),
+                       "Login"
+                     ), 
+                     class = "btn-theme", 
+                     width = "100%", 
+                     style = "margin-top: 20px; height: 50px; font-size: 16px;"),
+        
         br(), br(),
-        actionButton("back_login2", "Back", class = "btn-theme", width="100%")
+        
+        actionButton("back_login2", 
+                     tags$div(
+                       icon("arrow-left", style = "margin-right: 10px;"),
+                       "Back to Main Menu"
+                     ), 
+                     class = "btn-theme", 
+                     width = "100%",
+                     style = "background: linear-gradient(135deg, #666, #888);")
       )
     })
   })
@@ -1558,18 +1429,56 @@ server <- function(input, output, session){
     output$login_ui <- renderUI({
       tags$div(
         class = "login-box",
-        h3("Staff Login", style="color:#2c3e50;text-align:center;margin-bottom:20px;"),
+        style = "text-align: center;",
+        h3("Staff Login", class = "staff-login-title"),  # ADDED CLASS
+        p("Enter your staff credentials", style = "color: #666; margin-bottom: 25px;"),
+        
         div(
+          class = "form-group",
           tags$label("Username", `for` = "staff_user"),
-          textInput("staff_user", label = NULL, placeholder = "Enter username")
+          textInput("staff_user", 
+                    label = NULL, 
+                    placeholder = "Enter staff username",
+                    width = "100%")
         ),
+        
         div(
+          class = "form-group",
           tags$label("Password", `for` = "staff_pass"),
-          passwordInput("staff_pass", label = NULL, placeholder = "Enter password")
+          tags$div(
+            class = "password-input-wrapper",
+            passwordInput("staff_pass", 
+                          label = NULL, 
+                          placeholder = "Enter staff password",
+                          width = "100%"),
+            tags$button(
+              class = "password-toggle-btn",
+              type = "button",
+              icon("eye"),
+              onclick = "togglePasswordVisibility(this)"
+            )
+          )
         ),
-        actionButton("staff_login_btn", "Login", class="btn-theme", width="100%", style="margin-top:10px;"),
+        
+        actionButton("staff_login_btn", 
+                     tags$div(
+                       icon("user-tie", style = "margin-right: 10px;"),
+                       "Staff Login"
+                     ), 
+                     class = "btn-theme", 
+                     width = "100%", 
+                     style = "margin-top: 20px; height: 50px; font-size: 16px;"),
+        
         br(), br(),
-        actionButton("back_login3", "Back", class = "btn-theme", width="100%")
+        
+        actionButton("back_login3", 
+                     tags$div(
+                       icon("arrow-left", style = "margin-right: 10px;"),
+                       "Back to Main Menu"
+                     ), 
+                     class = "btn-theme", 
+                     width = "100%",
+                     style = "background: linear-gradient(135deg, #666, #888);")
       )
     })
   })
@@ -1608,6 +1517,9 @@ server <- function(input, output, session){
         
         user_data$cart_trigger <- user_data$cart_trigger + 1
         
+        # Clear any queued notifications
+        notification_queue(list())
+        
         output$login_ui <- renderUI({ NULL })
         shinyjs::hide("login_container")
         
@@ -1630,7 +1542,7 @@ server <- function(input, output, session){
                          style = "display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;",
                          div(
                            actionButton("refresh_products", "Refresh Products", 
-                                        class = "btn-theme", icon = icon("sync"))
+                                        class = "btn-theme", icon = shiny::icon("sync"))
                          ),
                          uiOutput("cart_container")
                        ),
@@ -1651,7 +1563,7 @@ server <- function(input, output, session){
                                 div(
                                   tags$label("Filter by Price", `for` = "price_filter"),
                                   selectInput("price_filter", label = NULL,
-                                              choices = c("All", "Under ₱2000", "₱2000 - ₱4000", "₱5000 - ₱10000", "Over ₱10000"),
+                                              choices = c("All", "Under ₱2,000", "₱2,000 - ₱4,000", "₱5,000 - ₱10,000", "Over ₱10,000"),
                                               selected = "All")
                                 )
                          )
@@ -1696,37 +1608,23 @@ server <- function(input, output, session){
                        ),
                        DTOutput("customer_completed")),
               
-              # NEW: Separate Logout tab
               tabPanel(
                 title = tags$span(icon("sign-out-alt"), "Logout"),
                 value = "logout_tab",
                 div(
-                  style = "text-align: center; padding: 60px 20px;",
-                  icon("sign-out-alt", style = "font-size: 72px; color: #e74c3c; margin-bottom: 30px;"),
-                  h3("Ready to Logout?", style = "color: #2c3e50; margin-bottom: 20px;"),
-                  p("Click the button below to securely logout from your account.", 
+                  class = "logout-tab-container",
+                  style = "text-align: center; max-width: 800px; margin: 0 auto; padding: 20px;",
+                  br(),
+                  h3("Click the logout button to sign out", style = "color: #2c3e50; margin-bottom: 20px;"),
+                  p("You will be redirected to the login page.", 
                     style = "color: #7f8c8d; font-size: 16px; margin-bottom: 40px;"),
                   
                   div(
-                    style = "background-color: #f8f9fa; padding: 30px; border-radius: 10px; max-width: 400px; margin: 0 auto;",
-                    h4("Account Information", style = "color: #34495e; margin-bottom: 20px;"),
-                    p(icon("user"), strong(" Username: "), user_data$username, 
-                      style = "font-size: 16px; margin-bottom: 15px;"),
-                    p(icon("user-tag"), strong(" Role: "), user_data$role, 
-                      style = "font-size: 16px; margin-bottom: 15px;"),
-                    hr(style = "border-color: #ddd; margin: 25px 0;"),
-                    
-                    div(
-                      style = "margin-top: 30px;",
-                      actionButton("logout_from_tab", "Confirm Logout", 
-                                   class = "btn-theme",
-                                   style = "background-color: #e74c3c; width: 200px; font-size: 16px; padding: 12px;",
-                                   icon = icon("sign-out-alt")),
-                      br(), br(),
-                      actionButton("cancel_logout_from_tab", "Cancel", 
-                                   class = "btn-theme",
-                                   style = "background-color: #95a5a6; width: 200px; font-size: 16px; padding: 12px;")
-                    )
+                    style = "margin-top: 30px;",
+                    actionButton("show_logout_modal_customer", "Logout", 
+                                 class = "btn-theme",
+                                 style = "background-color: #e74c3c; width: 200px; font-size: 16px; padding: 12px;",
+                                 icon = icon("sign-out-alt"))
                   ),
                   
                   tags$div(
@@ -1744,23 +1642,41 @@ server <- function(input, output, session){
         
         shinyjs::show("main_container")
         
+        # Send message to format dashboard numbers
+        delay(500, format_dashboard_numbers())
+        
         # Reset flag after delay
         delay(1000, {
           user_data$is_logging_in <- FALSE
         })
         
-        showNotification(paste("Welcome back,", user_data$username), type = "default", duration = 3)
+        show_notification(paste("Welcome back, ", user_data$username, "!", sep = ""), "success")
         
       } else {
-        showModal(modalDialog(
-          title = "Login Failed",
-          "Invalid username or password. Please try again.",
+        showModal(myModalDialog(
+          title = tags$div(
+            icon("exclamation-triangle", style = "color: #e63946; margin-right: 10px;"),
+            "Login Failed"
+          ),
+          tags$div(
+            style = "text-align: center; padding: 20px;",
+            icon("times-circle", style = "font-size: 48px; color: #e63946; margin-bottom: 15px;"),
+            p("Invalid username or password.", style = "font-size: 16px; color: #333;"),
+            p("Please try again.", style = "font-size: 14px; color: #666;")
+          ),
           easyClose = TRUE,
-          footer = modalButton("OK")
+          footer = modalButton("OK"),
+          size = "s",
+          options = list(backdrop = 'static', keyboard = FALSE)  # ADD THIS LINE
         ))
+        runjs("
+          setTimeout(function() {
+            Shiny.setInputValue('fix_modal_centering', Math.random());
+          }, 100);
+        ")
       }
     }, error = function(e) {
-      showNotification(paste("Login failed:", e$message), type = "error")
+      show_notification(paste("Login failed:", e$message), "error")
     })
   })
   
@@ -1779,6 +1695,9 @@ server <- function(input, output, session){
         user_data$role <- "Staff"
         user_data$user_id <- res$user_id
         user_data$username <- res$username
+        
+        # Clear any queued notifications
+        notification_queue(list())
         
         output$login_ui <- renderUI({ NULL })
         shinyjs::hide("login_container")
@@ -1842,17 +1761,20 @@ server <- function(input, output, session){
                                 )
                          ),
                          column(3,
-                                div(style = "margin-top: 25px;",
+                                div(style = "margin-top: 25px; display: flex; gap: 10px;",
                                     actionButton("refresh_shoes_btn", "Refresh", 
                                                  class = "btn-theme", 
-                                                 icon = icon("sync"))
+                                                 icon = icon("sync")),
+                                    actionButton("add_shoe_btn", "Add New Shoe", 
+                                                 class = "btn-theme",
+                                                 style = "background: linear-gradient(135deg, #27ae60, #2ecc71);")
                                 )
                          )
                        ),
                        br(),
                        DTOutput("staff_shoes_table"),
-                       br(),
-                       actionButton("add_shoe_btn", "Add New Shoe", class = "btn-theme")),
+                       br()
+              ),
               
               tabPanel("Completed Orders", 
                        br(),
@@ -1882,9 +1804,10 @@ server <- function(input, output, session){
                          ),
                          column(6,
                                 div(
-                                  class = "filter-buttons",
+                                  style = "display: flex; align-items: flex-end; height: 100%; padding-top: 24px;",
                                   actionButton("apply_date_filter", "Apply Filter",
-                                               class = "btn-theme"),
+                                               class = "btn-theme", 
+                                               style = "margin-right: 10px;"),
                                   actionButton("reset_date_filter", "Reset",
                                                class = "btn-theme",
                                                style = "background-color: #95a5a6;")
@@ -1897,37 +1820,23 @@ server <- function(input, output, session){
                        plotOutput("sales_trend_plot", height = "400px")
               ),
               
-              # Staff Logout tab
               tabPanel(
                 title = tags$span(icon("sign-out-alt"), "Logout"),
                 value = "staff_logout_tab",
                 div(
+                  class = "logout-tab-container",
                   style = "text-align: center; padding: 60px 20px;",
-                  icon("sign-out-alt", style = "font-size: 72px; color: #e74c3c; margin-bottom: 30px;"),
-                  h3("Staff Logout", style = "color: #2c3e50; margin-bottom: 20px;"),
-                  p("Click the button below to securely logout from the staff dashboard.", 
+                  br(),
+                  h3("Click the logout button to sign out", style = "color: #2c3e50; margin-bottom: 20px;"),
+                  p("You will be redirected to the login page.", 
                     style = "color: #7f8c8d; font-size: 16px; margin-bottom: 40px;"),
                   
                   div(
-                    style = "background-color: #f8f9fa; padding: 30px; border-radius: 10px; max-width: 400px; margin: 0 auto;",
-                    h4("Staff Account Information", style = "color: #34495e; margin-bottom: 20px;"),
-                    p(icon("user"), strong(" Username: "), user_data$username, 
-                      style = "font-size: 16px; margin-bottom: 15px;"),
-                    p(icon("user-tag"), strong(" Role: "), user_data$role, 
-                      style = "font-size: 16px; margin-bottom: 15px;"),
-                    hr(style = "border-color: #ddd; margin: 25px 0;"),
-                    
-                    div(
-                      style = "margin-top: 30px;",
-                      actionButton("staff_logout_from_tab", "Confirm Logout", 
-                                   class = "btn-theme",
-                                   style = "background-color: #e74c3c; width: 200px; font-size: 16px; padding: 12px;",
-                                   icon = icon("sign-out-alt")),
-                      br(), br(),
-                      actionButton("staff_cancel_logout_from_tab", "Cancel", 
-                                   class = "btn-theme",
-                                   style = "background-color: #95a5a6; width: 200px; font-size: 16px; padding: 12px;")
-                    )
+                    style = "margin-top: 30px;",
+                    actionButton("show_logout_modal_staff", "Staff Logout", 
+                                 class = "btn-theme",
+                                 style = "background-color: #e74c3c; width: 200px; font-size: 16px; padding: 12px;",
+                                 icon = icon("sign-out-alt"))
                   ),
                   
                   tags$div(
@@ -1943,18 +1852,28 @@ server <- function(input, output, session){
           )
         })
         
+        
         shinyjs::show("main_container")
-        showNotification(paste("Welcome,", user_data$username), type = "default", duration = 3)
+        
+        # Send message to format dashboard numbers
+        delay(500, format_dashboard_numbers())
+        
+        show_notification(paste("Welcome,", user_data$username, "!", sep = ""), "success")
       } else {
-        showModal(modalDialog(
+        showModal(myModalDialog(
           title = "Login Failed",
           "Invalid username or password. Please try again.",
           easyClose = TRUE,
           footer = modalButton("OK")
         ))
+        runjs("
+          setTimeout(function() {
+            Shiny.setInputValue('fix_modal_centering', Math.random());
+          }, 100);
+        ")
       }
     }, error = function(e) {
-      showNotification(paste("Login failed:", e$message), type = "error")
+      show_notification(paste("Login failed:", e$message), "error")
     })
   })
   
@@ -1970,7 +1889,7 @@ server <- function(input, output, session){
       tags$div(
         class = "cart-container",
         onclick = "Shiny.setInputValue('show_cart', Math.random(), {priority: 'event'})",
-        icon("shopping-cart", class = "cart-icon"),
+        shiny::icon("shopping-cart", class = "cart-icon"),
         tags$span(
           class = "cart-badge",
           textOutput("cart_count", inline = TRUE, container = span)
@@ -2021,8 +1940,8 @@ server <- function(input, output, session){
   
   # --------------------- Logout Handlers ---------------------
   cleanup_user_session <- function(show_message = TRUE) {
-    # Save cart if exists
-    if(user_data$logged_in && length(user_data$cart) > 0) {
+    # Save cart if it exists
+    if (user_data$logged_in && length(user_data$cart) > 0) {
       save_cart_to_db(user_data$user_id, user_data$cart)
     }
     
@@ -2040,27 +1959,114 @@ server <- function(input, output, session){
     # Reset modal state
     modal_state$is_open <- FALSE
     modal_state$shoe_id <- NULL
-    modal_state$processing = FALSE
+    modal_state$processing <- FALSE
     current_modal_shoe_id(NULL)
     
     # Clear session data
     session$userData$editing_shoe_id <- NULL
     session$userData$deleting_shoe_id <- NULL
     session$userData$current_image <- NULL
+    session$sendCustomMessage("forceCSSReload", list())
+    
+    delay(100, {
+      session$sendCustomMessage("refreshCSS", list())
+    })
     
     # Reset refresh triggers
     refresh_trigger$shoes <- 0
     refresh_trigger$orders <- 0
+    
+    # Clear notification queue
+    notification_queue(list())
     
     # Clear inputs
     shinyjs::reset("product_search")
     shinyjs::reset("inventory_search")
     
     # Only show message if explicitly requested
-    if(show_message) {
-      showNotification("Logged out successfully", type = "message", duration = 3)
+    if (show_message) {
+      show_notification("Logged out successfully", "message", duration = 3)
     }
   }
+  
+  
+  # Customer logout modal
+  observeEvent(input$show_logout_modal_customer, {
+    showModal(myModalDialog(
+      title = tags$div(icon("sign-out-alt"), " Confirm Logout"),
+      tags$div(
+        style = "text-align: center; padding: 20px;",
+        icon("sign-out-alt", style = "font-size: 48px; color: #e74c3c; margin-bottom: 15px;"),
+        h4("Are you sure you want to logout?", style = "color: #2c3e50; margin-bottom: 15px;"),
+        p("You will be redirected to the login page.", style = "color: #7f8c8d;")
+      ),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("confirm_logout_customer", "Yes, Logout", 
+                     class = "btn-theme",
+                     style = "background-color: #e74c3c;")
+      ),
+      size = "s",
+      easyClose = TRUE
+    ))
+  })
+  
+  observeEvent(input$confirm_logout_customer, {
+    removeModal()
+    # Set logout flag
+    user_data$is_logging_out <- TRUE
+    
+    # Don't show message here, will be shown after redirect
+    cleanup_user_session(show_message = FALSE)
+    
+    # Clear main UI
+    output$main_ui <- renderUI({ NULL })
+    shinyjs::hide("main_container")
+    
+    # Show login UI
+    render_login_ui()
+    
+    # Show ONE notification
+    showNotification("Logged out successfully. See you next time!", 
+                     type = "message", duration = 3)
+  })
+  
+  # Staff logout modal
+  observeEvent(input$show_logout_modal_staff, {
+    showModal(myModalDialog(
+      title = tags$div(icon("sign-out-alt"), " Confirm Staff Logout"),
+      tags$div(
+        style = "text-align: center; padding: 20px;",
+        icon("user-tie", style = "font-size: 48px; color: #e74c3c; margin-bottom: 15px;"),
+        h4("Are you sure you want to logout?", style = "color: #2c3e50; margin-bottom: 15px;"),
+        p("You will be redirected to the login page.", style = "color: #7f8c8d;")
+      ),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("confirm_logout_staff", "Yes, Logout", 
+                     class = "btn-theme",
+                     style = "background-color: #e74c3c;")
+      ),
+      size = "s",
+      easyClose = TRUE
+    ))
+  })
+  
+  observeEvent(input$confirm_logout_staff, {
+    removeModal()
+    # Don't show message here, will be shown after redirect
+    cleanup_user_session(show_message = FALSE)
+    
+    # Clear main UI
+    output$main_ui <- renderUI({ NULL })
+    shinyjs::hide("main_container")
+    
+    # Show login UI
+    render_login_ui()
+    
+    # Show ONE notification
+    showNotification("Logged out successfully", type = "message", duration = 3)
+  })
   
   # Handle cancel from customer logout tab
   observeEvent(input$cancel_logout_from_tab, {
@@ -2182,10 +2188,10 @@ server <- function(input, output, session){
       # Add price filter
       if(!is.null(input$price_filter) && input$price_filter != "All") {
         price_conditions <- switch(input$price_filter,
-                                   "Under ₱2000" = "price < 2000",
-                                   "₱2000 - ₱4000" = "price >= 2000 AND price <= 4000",
-                                   "₱5000 - ₱10000" = "price >= 5000 AND price <= 10000",
-                                   "Over ₱10000" = "price > 10000")
+                                   "Under ₱2,000" = "price < 2000",
+                                   "₱2,000 - ₱4,000" = "price >= 2000 AND price <= 4000",
+                                   "₱5,000 - ₱10,000" = "price >= 5000 AND price <= 10000",
+                                   "Over ₱10,000" = "price > 10000")
         query <- paste(query, "AND", price_conditions)
       }
       
@@ -2242,6 +2248,18 @@ server <- function(input, output, session){
       ",
       card_list
     )
+  })
+  
+  # --------------------- Fix Modal Centering ---------------------
+  observeEvent(input$fix_modal_centering, {
+    runjs("
+      if (typeof fixAllModalCentering === 'function') {
+        fixAllModalCentering();
+      }
+      if (typeof fixAddToCartModalLayout === 'function') {
+        fixAddToCartModalLayout();
+      }
+    ")
   })
   
   # --------------------- Cart Modal ---------------------
@@ -2308,27 +2326,49 @@ server <- function(input, output, session){
       
       user_data$modal_shoe <- as.list(shoe[1, ])
       
-      showModal(modalDialog(
+      showModal(myModalDialog(
         title = tags$div(
           icon("plus-circle"),
           paste("Add", shoe$name, "to Cart")
         ),
         tags$img(src = get_image_path(shoe$image), width = "100%", style = "border-radius:10px; margin-bottom:15px;",
                  onerror = "this.onerror=null; this.src='default_shoe_image.jpg'"),
-        p(strong("Price: "), paste0("₱", sprintf("%.2f", shoe$price))),
-        p(strong("Available Stock: "), shoe$stock),
+        p(strong("Price: "), format_currency(shoe$price)),
+        p(strong("Available Stock: "), format_number(shoe$stock, digits = 0)),
         selectInput("sel_color", "Select Color", choices = colors),
         selectInput("sel_size", "Select Size", choices = sizes),
         numericInput("sel_qty", "Quantity", value = 1, min = 1, max = min(shoe$stock, 10)),
         uiOutput("modal_validation"),
         footer = tagList(
-          actionButton("confirm_add_cart", "Add to Cart", class = "btn-theme",
-                       style = "width: 100%; margin-bottom: 10px;"),
-          modalButton("Cancel")
+          div(class = "modal-button-group",
+              actionButton("confirm_add_cart", "Add to Cart", class = "btn-theme",
+                           style = "width: 100%; margin-bottom: 10px;"),
+              div(style = "text-align: center; width: 100%;",
+                  actionButton("cancel_add_cart", "Cancel", 
+                               class = "btn-theme btn-cancel",
+                               style = "width: 100%;")
+              )
+          )
         ),
         easyClose = TRUE,
-        size = "m"
+        size = "m",
+        class = "centered-modal",
+        options = list(backdrop = 'static', keyboard = FALSE)  # ADD THIS LINE
       ))
+      runjs("
+  setTimeout(function() {
+    // Fix modal centering
+    $('.modal').css('display', 'flex');
+    $('.modal').css('align-items', 'center');
+    $('.modal').css('justify-content', 'center');
+    
+    // Fix logout tab scrolling
+    $('#logout_tab, #staff_logout_tab').css({
+      'max-height': 'calc(100vh - 200px)',
+      'overflow-y': 'auto'
+    });
+  }, 100);
+")
     }, error = function(e) {
       user_data$modal_open <- FALSE
       modal_state$is_open <- FALSE
@@ -2366,8 +2406,8 @@ server <- function(input, output, session){
     shoe_id <- current_modal_shoe_id()
     
     if(is.null(shoe_id) || is.na(shoe_id)) {
-      showNotification("Shoe information is no longer available. Please try again.", 
-                       type = "error")
+      show_notification("Shoe information is no longer available. Please try again.", 
+                        "error")
       removeModal()
       modal_state$is_open <- FALSE
       modal_state$shoe_id <- NULL
@@ -2381,7 +2421,7 @@ server <- function(input, output, session){
                              params = list(shoe_id))
       
       if(nrow(shoe) == 0) {
-        showNotification("Shoe not found or unavailable", type = "error")
+        show_notification("Shoe not found or unavailable", "error")
         removeModal()
         modal_state$is_open <- FALSE
         modal_state$shoe_id <- NULL
@@ -2394,14 +2434,14 @@ server <- function(input, output, session){
       shoe <- as.list(shoe[1, ])
       
       if(is.na(input$sel_qty) || input$sel_qty < 1) {
-        showNotification("Quantity must be at least 1", type = "error")
+        show_notification("Quantity must be at least 1", "error")
         return()
       }
       
       if(input$sel_qty > as.numeric(shoe$stock)){
-        showNotification(paste("Quantity exceeds available stock. Only", 
-                               shoe$stock, "units available."), 
-                         type = "error")
+        show_notification(paste("Quantity exceeds available stock. Only", 
+                                shoe$stock, "units available."), 
+                          "error")
         return()
       }
       
@@ -2423,9 +2463,9 @@ server <- function(input, output, session){
           as.numeric(input$sel_qty)
         
         if(new_quantity > as.numeric(shoe$stock)) {
-          showNotification(paste("Cannot add more. Total would exceed available stock of", 
-                                 shoe$stock), 
-                           type = "error")
+          show_notification(paste("Cannot add more. Total would exceed available stock of", 
+                                  shoe$stock), 
+                            "error")
           return()
         }
         
@@ -2452,21 +2492,15 @@ server <- function(input, output, session){
       user_data$modal_open <- FALSE
       current_modal_shoe_id(NULL)
       
-      showNotification(
-        HTML(paste(
-          "<div style='text-align:center;'>",
-          "<h4 style='color:#27ae60;'>✅ Added to Cart!</h4>",
-          "<p>", shoe$name, "(", input$sel_color, "-", input$sel_size, ")</p>",
-          "<p>Quantity:", input$sel_qty, "</p>",
-          "<p>Cart now has", length(user_data$cart), "items</p>",  # Debug info
-          "</div>"
-        )), 
-        type = "message",
-        duration = 5
+      # Show notification AFTER modal is closed with wait_for_modal parameter
+      show_notification(
+        paste(shoe$name, "added to cart!"),
+        "success",
+        wait_for_modal = FALSE  # Changed to FALSE since modal is already closed
       )
       
     }, error = function(e) {
-      showNotification(paste("Error adding to cart:", e$message), type = "error")
+      show_notification(paste("Error adding to cart:", e$message), "error")
       removeModal()
       modal_state$is_open <- FALSE
       modal_state$shoe_id <- NULL
@@ -2478,21 +2512,32 @@ server <- function(input, output, session){
   
   # --------------------- Cart Display (FIXED) ---------------------
   observeEvent(input$show_cart, {
-    # Add dependency on cart changes
-    user_data$cart_trigger
+    # Add debounce to prevent rapid clicks
+    shinyjs::disable("show_cart")
+    on.exit(shinyjs::enable("show_cart"))
     
-    # Check cart content - this will now re-run when cart changes
+    # Check cart content
     if(length(user_data$cart) == 0) {
-      showModal(modalDialog(
+      showModal(myModalDialog(
         title = tags$h3(icon("shopping-cart"), " Your Shopping Cart"),
         tags$div(
           class = "empty-cart-message",
-          icon("shopping-cart", style = "font-size:60px; color:#ddd;"),
+          icon("shopping-cart", style = "font-size: 80px; color: #ddd; margin-bottom: 20px;"),
           h4("Your cart is empty"),
           p("Add some shoes to get started!")
         ),
-        footer = modalButton("Continue Shopping"),
-        easyClose = TRUE
+        footer = tagList(
+          div(style = "display: flex; justify-content: center; width: 100%; gap: 10px;",
+              modalButton("Continue Shopping"),
+              actionButton("clear_cart_btn", "Clear Cart", class = "btn-theme",
+                           style = "background-color: #f39c12;"),
+              actionButton("make_order_btn", "Place Order", class = "btn-theme")
+          )
+        ),
+        size = "m",
+        easyClose = TRUE,
+        class = "centered-modal",
+        options = list(backdrop = 'static', keyboard = FALSE)  
       ))
       return()
     }
@@ -2502,6 +2547,9 @@ server <- function(input, output, session){
       as.numeric(x$price) * as.numeric(x$quantity)
     }))
     
+    # Format with commas:
+    formatted_total <- format_currency(cart_total)
+    
     # Create cart data frame
     cart_df <- do.call(rbind, lapply(1:length(user_data$cart), function(i) {
       item <- user_data$cart[[i]]
@@ -2510,9 +2558,9 @@ server <- function(input, output, session){
         Name = item$name,
         Color = item$color,
         Size = item$size,
-        Quantity = item$quantity,
-        Price = item$price,
-        Total = as.numeric(item$price) * as.numeric(item$quantity),
+        Quantity = format_number(item$quantity, digits = 0),
+        Price = format_currency(item$price),
+        Total = format_currency(as.numeric(item$price) * as.numeric(item$quantity)),
         stringsAsFactors = FALSE
       )
     }))
@@ -2525,22 +2573,37 @@ server <- function(input, output, session){
         options = list(
           pageLength = 10,
           dom = 't',
-          ordering = FALSE
+          ordering = FALSE,
+          scrollX = TRUE,
+          scrollY = "300px",
+          scrollCollapse = TRUE,
+          paging = FALSE,
+          info = FALSE,
+          columnDefs = list(
+            list(width = '150px', targets = 0),
+            list(width = '80px', targets = 1),
+            list(width = '80px', targets = 2),
+            list(width = '60px', targets = 3),
+            list(width = '100px', targets = 4),
+            list(width = '100px', targets = 5)
+          )
         ),
-        rownames = FALSE
-      ) %>%
-        formatCurrency(c("Price", "Total"), "₱")
+        rownames = FALSE,
+        class = 'compact stripe hover'
+      )
     })
     
     # Show the modal with cart contents
-    showModal(modalDialog(
+    showModal(myModalDialog(
       title = tags$h3(icon("shopping-cart"), " Your Shopping Cart"),
-      DTOutput("cart_table_display"),
+      div(style = "max-height: 400px; overflow-y: auto;",
+          DTOutput("cart_table_display")
+      ),
       br(),
       tags$div(
         style = "background:#f8f9fa; padding:15px; border-radius:10px;",
         h4(paste("Total Items:", cart_count())),
-        h4(paste("Cart Total: ₱", sprintf("%.2f", cart_total)))
+        h4(paste("Cart Total:", formatted_total))
       ),
       footer = tagList(
         modalButton("Continue Shopping"),
@@ -2552,20 +2615,55 @@ server <- function(input, output, session){
       size = "l",
       easyClose = TRUE
     ))
+    runjs("
+  setTimeout(function() {
+    // Fix modal centering
+    $('.modal').css('display', 'flex');
+    $('.modal').css('align-items', 'center');
+    $('.modal').css('justify-content', 'center');
+    
+    // Fix logout tab scrolling
+    $('#logout_tab, #staff_logout_tab').css({
+      'max-height': 'calc(100vh - 200px)',
+      'overflow-y': 'auto'
+    });
+  }, 100);
+")
   })
   
   observeEvent(input$clear_cart_btn, {
     # Show confirmation dialog
-    showModal(modalDialog(
+    showModal(myModalDialog(
       title = "Confirm Clear Cart",
       "Are you sure you want to clear your cart? This action cannot be undone.",
       footer = tagList(
-        modalButton("Cancel"),
+        actionButton("cancel_clear_cart", "Cancel", 
+                     class = "btn-theme",
+                     style = "background: linear-gradient(135deg, #6c757d, #495057);"),
         actionButton("confirm_clear_cart", "Yes, Clear Cart", 
                      class = "btn-theme",
                      style = "background-color: #e74c3c;")
       )
     ))
+    runjs("
+  setTimeout(function() {
+    // Fix modal centering
+    $('.modal').css('display', 'flex');
+    $('.modal').css('align-items', 'center');
+    $('.modal').css('justify-content', 'center');
+    
+    // Fix logout tab scrolling
+    $('#logout_tab, #staff_logout_tab').css({
+      'max-height': 'calc(100vh - 200px)',
+      'overflow-y': 'auto'
+    });
+  }, 100);
+")
+  })
+  
+  # Add this observer for cancel clear cart
+  observeEvent(input$cancel_clear_cart, {
+    removeModal()
   })
   
   observeEvent(input$confirm_clear_cart, {
@@ -2578,22 +2676,40 @@ server <- function(input, output, session){
     }
     
     removeModal()
-    showNotification("Cart cleared", type = "warning", duration = 3)
+    show_notification("Shopping cart cleared", "info")
     removeModal()  # Close cart modal
   })
   
-  # --------------------- Place Order ---------------------
+  # --------------------- Place Order - FIXED ---------------------
   observeEvent(input$make_order_btn, {
+    # Add debounce to prevent double clicks
+    shinyjs::disable("make_order_btn")
+    shinyjs::addClass("make_order_btn", "loading-state")
+    on.exit({
+      shinyjs::enable("make_order_btn")
+      shinyjs::removeClass("make_order_btn", "loading-state")
+    })
+    
     if(length(user_data$cart) == 0){
-      showModal(modalDialog(
-        title = "Empty Cart",
-        "Your cart is empty! Please add items before placing an order.",
+      showModal(myModalDialog(
+        title = tags$div(
+          icon("shopping-cart", style = "color: #e63946; margin-right: 10px;"),
+          "Empty Cart"
+        ),
+        tags$div(
+          style = "text-align: center; padding: 20px;",
+          icon("cart-arrow-down", style = "font-size: 48px; color: #ddd; margin-bottom: 15px;"),
+          h4("Your cart is empty", style = "color: #333;"),
+          p("Please add items before placing an order.", style = "color: #666;")
+        ),
         easyClose = TRUE,
-        footer = modalButton("OK")
+        footer = modalButton("OK"),
+        size = "s"
       ))
       return()
     }
     
+    # Validate stock before proceeding
     stock_issues <- c()
     for(item in user_data$cart){
       current_stock <- dbGetQueryPool(
@@ -2608,7 +2724,7 @@ server <- function(input, output, session){
     }
     
     if(length(stock_issues) > 0){
-      showModal(modalDialog(
+      showModal(myModalDialog(
         title = "Insufficient Stock",
         HTML(paste(stock_issues, collapse = "<br>")),
         easyClose = TRUE,
@@ -2626,7 +2742,7 @@ server <- function(input, output, session){
       dbExecute(
         conn, 
         "INSERT INTO orders (customer_id, status, total_price, created_at, updated_at) 
-         VALUES (?, ?, ?, datetime('now'), datetime('now'))",
+       VALUES (?, ?, ?, datetime('now'), datetime('now'))",
         params = list(user_data$user_id, "Pending", total)
       )
       
@@ -2637,7 +2753,7 @@ server <- function(input, output, session){
         dbExecute(
           conn, 
           "INSERT INTO order_items (order_id, shoe_id, quantity, color, size, price) 
-           VALUES (?, ?, ?, ?, ?, ?)",
+         VALUES (?, ?, ?, ?, ?, ?)",
           params = list(order_id, item$shoe_id, item$quantity, item$color, item$size, item$price)
         )
         
@@ -2650,62 +2766,99 @@ server <- function(input, output, session){
       
       dbExecute(conn, "COMMIT")
       
-      # Clear cart after successful order
+      # Clear cart and update UI immediately
       user_data$cart <- list()
       user_data$cart_trigger <- user_data$cart_trigger + 1
       clear_cart_in_db(user_data$user_id)
       
-      # Show order confirmation modal
-      showModal(modalDialog(
-        title = tags$h3(icon("check-circle"), " Order Placed Successfully!"),
-        tags$div(
-          style = "text-align:center; padding:20px;",
-          icon("check-circle", style = "font-size: 48px; color: #27ae60; margin-bottom: 20px;"),
-          h4(paste("Track ID:", track_id), 
-             class = "track-id-badge"),
-          h4(paste("Total Amount: ₱", sprintf("%.2f", total))),
-          p(tags$span("Status: Pending", class = "status-pending-badge", 
-                      style = "font-size: 12px;")),
-          br(),
-          tags$div(
-            style = "background-color: #f8f9fa; padding: 15px; border-radius: 10px; margin: 20px 0;",
-            h5("Order Confirmation Sent!"),
-            p("Thanks for Ordering!"),
-            p("===============================================")
-          ),
-          p("You can track your order in the 'Order Status' tab."),
-          br(),
-          tags$div(
-            style = "margin-top: 20px; padding: 15px; background-color: #f8f9fa; border-radius: 10px;",
-            icon("info-circle", style = "color: #3498db; margin-right: 10px;"),
-            "This modal will close automatically in 5 seconds..."
-          )
-        ),
-        footer = NULL,
-        size = "m",
-        easyClose = FALSE
-      ))
+      # Remove the cart modal first
+      removeModal()
       
-      delay(5000, {
-        removeModal()
+      # Show success message - wait for modal to close
+      delay(100, {
+        showModal(myModalDialog(
+          title = tags$div(
+            icon("check-circle", style = "color: #28a745; margin-right: 10px;"),
+            "Order Placed Successfully!"
+          ),
+          tags$div(
+            style = "text-align: center; padding: 20px;",
+            icon("party-horn", style = "font-size: 60px; color: #28a745; margin-bottom: 20px;"),
+            h4("🎉 Order Confirmed!", style = "color: #28a745; margin-bottom: 15px;"),
+            tags$div(
+              style = "background: linear-gradient(135deg, rgba(230,57,70,0.1), rgba(26,26,26,0.05)); 
+                     padding: 15px; border-radius: 8px; margin: 15px 0;",
+              p(style = "font-size: 16px; margin-bottom: 8px;", 
+                strong("Track ID: "), 
+                tags$span(track_id, style = "font-family: monospace; background: #f8f9fa; 
+                        padding: 4px 8px; border-radius: 4px; font-weight: bold;")
+              ),
+              p(style = "font-size: 16px; margin-bottom: 8px;", 
+                strong("Total Amount: "), 
+                tags$span(format_currency(total),
+                          style = "color: #e63946; font-weight: bold;")
+              ),
+              tags$p(tags$span("Status: Pending", 
+                               class = "status-pending-badge",
+                               style = "font-size: 14px; display: inline-block; margin-top: 10px;"))
+            ),
+            tags$div(
+              style = "margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px;",
+              h5("📧 Order Confirmation Sent!", style = "color: #333; margin-bottom: 10px;"),
+              p("Thanks for your order! You can track it in the 'Order Status' tab.", 
+                style = "color: #666;")
+            )
+          ),
+          footer = tagList(
+            actionButton("continue_shopping_btn", "Continue Shopping", 
+                         class = "btn-theme",
+                         style = "width: 100%;")
+          ),
+          size = "m",
+          easyClose = TRUE
+        ))
+        
+        # Show toast notification after order success modal appears
+        delay(200, {
+          show_notification(
+            paste("Order", track_id, "placed successfully!"),
+            "success",
+            wait_for_modal = TRUE  # Wait for order success modal to close
+          )
+        })
       })
       
     }, error = function(e){
       dbExecute(conn, "ROLLBACK")
-      showModal(modalDialog(
-        title = "Order Failed", 
-        paste("Failed to place order:", e$message),
+      showModal(myModalDialog(
+        title = tags$div(
+          icon("times-circle", style = "color: #dc3545; margin-right: 10px;"),
+          "Order Failed"
+        ),
+        tags$div(
+          style = "text-align: center; padding: 20px;",
+          icon("exclamation-triangle", style = "font-size: 48px; color: #dc3545; margin-bottom: 15px;"),
+          h4("Something went wrong", style = "color: #333;"),
+          p(paste("Error:", e$message), style = "color: #666;")
+        ),
         easyClose = TRUE,
-        footer = modalButton("OK")
+        footer = modalButton("OK"),
+        size = "s"
       ))
     }, finally = {
       poolReturn(conn)
     })
   })
   
+  # Add this observer for continue shopping button
+  observeEvent(input$continue_shopping_btn, {
+    removeModal()
+  })
+  
   # --------------------- Customer Orders (ACTIVE ONLY) ---------------------
   order_refresh_trigger <- reactiveVal(0)
   # Update the customer_orders_data reactive to include the trigger
+  # --------------------- Customer Orders (ACTIVE ONLY) ---------------------
   customer_orders_data <- reactive({
     # Add dependencies
     input$cancel_order
@@ -2720,12 +2873,14 @@ server <- function(input, output, session){
          FROM orders 
          WHERE customer_id = ? 
            AND status NOT IN ('Completed', 'Cancelled')
-         ORDER BY created_at DESC",
+         ORDER BY datetime(created_at, 'localtime') DESC",
           params = list(user_data$user_id)
         )
         
         if(nrow(orders) > 0) {
           orders$track_id <- paste0("SOS", sprintf("%03d", orders$order_id))
+          orders$formatted_date <- sapply(orders$created_at, format_date)
+          orders$formatted_total <- format_currency(orders$total_price)
         }
         
         return(orders)
@@ -2743,8 +2898,12 @@ server <- function(input, output, session){
     
     if(is.null(orders) || nrow(orders) == 0) {
       return(datatable(
-        data.frame(Message = "You haven't any placed ongoing orders yet"), 
-        options = list(dom = 't', ordering = FALSE),
+        data.frame(Message = "You haven't placed any ongoing orders yet"), 
+        options = list(
+          dom = 't', 
+          ordering = FALSE,
+          language = list(zeroRecords = "You haven't placed any ongoing orders yet")
+        ),
         rownames = FALSE
       ))
     }
@@ -2755,7 +2914,7 @@ server <- function(input, output, session){
           paste0("cancel_", orders$order_id[i]), 
           "Cancel", 
           class = "btn-theme btn-sm",
-          style = "background-color: #e74c3c;",
+          style = "background-color: #e74c3c; font-size: 12px; padding: 4px 10px;",
           onclick = sprintf(
             "Shiny.setInputValue('cancel_order', %d, {priority:'event'})", 
             orders$order_id[i]
@@ -2766,8 +2925,14 @@ server <- function(input, output, session){
       }
     })
     
-    display <- orders[, c("track_id", "total_price", "created_at", "action")]
-    colnames(display) <- c("Track ID", "Total", "Date", "Action")
+    # Use formatted columns with proper dates
+    display <- data.frame(
+      "Track ID" = orders$track_id,
+      "Total" = orders$formatted_total,
+      "Date" = orders$formatted_date,
+      "Action" = orders$action,
+      stringsAsFactors = FALSE
+    )
     
     datatable(
       display, 
@@ -2775,20 +2940,29 @@ server <- function(input, output, session){
       options = list(
         pageLength = 10, 
         dom = 'tip',
+        scrollX = FALSE,
         columnDefs = list(
-          list(className = 'dt-center', targets = '_all')
+          list(className = 'dt-center', targets = '_all'),
+          list(width = '120px', targets = 0), # Track ID
+          list(width = '120px', targets = 1), # Total
+          list(width = '200px', targets = 2), # Date
+          list(width = '100px', targets = 3)  # Action
+        ),
+        language = list(
+          emptyTable = "You haven't placed any ongoing orders yet",
+          zeroRecords = "You haven't placed any ongoing orders yet"
         )
       ),
-      rownames = FALSE
-    ) %>%
-      formatCurrency("Total", "₱")
+      rownames = FALSE,
+      class = 'cell-border stripe hover'  # Standard table class
+    )
   })
   
   # --------------------- Cancel Order ---------------------
   observeEvent(input$cancel_order, {
     order_id <- input$cancel_order
     
-    showModal(modalDialog(
+    showModal(myModalDialog(
       title = "Confirm Cancellation",
       tags$div(
         style = "text-align:center;",
@@ -2798,12 +2972,33 @@ server <- function(input, output, session){
         p("This action cannot be undone.", style = "color:#7f8c8d;")
       ),
       footer = tagList(
-        modalButton("No, Keep Order"),
+        actionButton("cancel_cancel_order", "No, Keep Order", 
+                     class = "btn-theme",
+                     style = "background: linear-gradient(135deg, #6c757d, #495057);"),
         actionButton("confirm_cancel", "Yes, Cancel Order", 
                      class = "btn-theme",
                      style = "background-color: #e74c3c;")
       )
     ))
+    runjs("
+  setTimeout(function() {
+    // Fix modal centering
+    $('.modal').css('display', 'flex');
+    $('.modal').css('align-items', 'center');
+    $('.modal').css('justify-content', 'center');
+    
+    // Fix logout tab scrolling
+    $('#logout_tab, #staff_logout_tab').css({
+      'max-height': 'calc(100vh - 200px)',
+      'overflow-y': 'auto'
+    });
+  }, 100);
+")
+  })
+  
+  # Add this observer for cancel cancel order
+  observeEvent(input$cancel_cancel_order, {
+    removeModal()
   })
   
   # Update the cancellation handler to trigger immediate refresh
@@ -2890,14 +3085,18 @@ server <- function(input, output, session){
           ))
         }
         
+        # Format date and total price
+        order$formatted_date <- format_date(order$created_at)
+        order$formatted_total <- format_currency(order$total_price)
+        
         # Create summary table with status prominently displayed
         summary_df <- data.frame(
           Detail = c("Track ID", "Status", "Date", "Total"),
           Value = c(
             track_id,
-            paste0("<span class='status-", tolower(order$status), "-badge'>", order$status, "</span>"),
-            order$created_at,
-            paste0("₱", sprintf("%.2f", order$total_price))
+            paste0("<span class='status-", tolower(gsub(" ", "-", order$status)), "-badge'>", order$status, "</span>"),
+            order$formatted_date,
+            order$formatted_total
           ),
           stringsAsFactors = FALSE
         )
@@ -2905,13 +3104,18 @@ server <- function(input, output, session){
         # Get order items
         order_items <- dbGetQueryPool(
           "SELECT s.name, oi.quantity, oi.color, oi.size, oi.price 
-           FROM order_items oi 
-           JOIN shoes s ON oi.shoe_id = s.shoe_id 
-           WHERE oi.order_id = ?",
+         FROM order_items oi 
+         JOIN shoes s ON oi.shoe_id = s.shoe_id 
+         WHERE oi.order_id = ?",
           params = list(order$order_id)
         )
         
         if(nrow(order_items) > 0) {
+          # Format order items
+          order_items$formatted_price <- format_currency(order_items$price)
+          order_items$formatted_total <- format_currency(order_items$price * order_items$quantity)
+          order_items$formatted_quantity <- format_number(order_items$quantity, digits = 0)
+          
           # Combine summary and items
           combined_df <- rbind(
             data.frame(
@@ -2952,11 +3156,11 @@ server <- function(input, output, session){
             ),
             data.frame(
               Item = order_items$name,
-              Quantity = order_items$quantity,
+              Quantity = order_items$formatted_quantity,
               Color = order_items$color,
               Size = order_items$size,
-              Price = paste0("₱", sprintf("%.2f", order_items$price)),
-              Total = paste0("₱", sprintf("%.2f", order_items$price * order_items$quantity)),
+              Price = order_items$formatted_price,
+              Total = order_items$formatted_total,
               stringsAsFactors = FALSE
             )
           )
@@ -2968,22 +3172,9 @@ server <- function(input, output, session){
               pageLength = 20,
               dom = 't',
               ordering = FALSE,
-              columnDefs = list(
-                list(
-                  targets = 0,
-                  render = JS(
-                    "function(data, type, row, meta) {
-                      if (meta.row === 0 || meta.row === 7) {
-                        return '<strong style=\"color: #2c3e50; font-size: 16px;\">' + data + '</strong>';
-                      }
-                      if (meta.row === 1 || meta.row === 2 || meta.row === 3 || meta.row === 4) {
-                        return '<strong>' + data + '</strong>';
-                      }
-                      return data;
-                    }"
-                  )
-                )
-              )
+              scrollX = FALSE,
+              paging = FALSE,
+              info = FALSE
             ),
             rownames = FALSE
           )
@@ -3005,16 +3196,19 @@ server <- function(input, output, session){
         ))
       })
     })
+    apply_status_styles()
   })
   
-  # --------------------- Customer Completed Orders (HISTORY) ---------------------
+  # Apply status badge styles
+  session$sendCustomMessage("applyStatusStyles", list())
+  
   output$customer_completed <- renderDT({
     tryCatch({
       orders <- dbGetQueryPool(
         "SELECT order_id, total_price, created_at, status 
-         FROM orders 
-         WHERE customer_id = ? AND status IN ('Completed', 'Cancelled')
-         ORDER BY created_at DESC",
+       FROM orders 
+       WHERE customer_id = ? AND status IN ('Completed', 'Cancelled')
+       ORDER BY datetime(created_at, 'localtime') DESC",
         params = list(user_data$user_id)
       )
       
@@ -3028,11 +3222,20 @@ server <- function(input, output, session){
       
       orders$track_id <- paste0("SOS", sprintf("%03d", orders$order_id))
       orders$status_formatted <- sapply(orders$status, function(s){
-        paste0("<span class='status-", tolower(s), "-badge'>", s, "</span>")
+        paste0("<span class='status-", tolower(gsub(" ", "-", s)), "-badge'>", s, "</span>")
       })
       
-      display <- orders[, c("track_id", "total_price", "created_at", "status_formatted")]
-      colnames(display) <- c("Track ID", "Total", "Date", "Status")
+      # FORMAT DATE CONSISTENTLY - USING THE SAME FORMAT AS MANAGE ORDERS
+      orders$formatted_date <- sapply(orders$created_at, format_date)
+      orders$formatted_total <- format_currency(orders$total_price)
+      
+      display <- data.frame(
+        "Track ID" = orders$track_id,
+        "Total" = orders$formatted_total,
+        "Date" = orders$formatted_date,
+        "Status" = orders$status_formatted,
+        stringsAsFactors = FALSE
+      )
       
       datatable(
         display, 
@@ -3042,12 +3245,20 @@ server <- function(input, output, session){
           pageLength = 10, 
           dom = 'tip',
           columnDefs = list(
-            list(className = 'dt-center', targets = '_all')
+            list(className = 'dt-center', targets = '_all'),
+            list(width = '120px', targets = 0), # Track ID
+            list(width = '120px', targets = 1), # Total
+            list(width = '180px', targets = 2), # Date
+            list(width = '120px', targets = 3)  # Status
+          ),
+          language = list(
+            emptyTable = "No completed or cancelled orders",
+            zeroRecords = "No completed or cancelled orders"
           )
         ),
-        rownames = FALSE
-      ) %>%
-        formatCurrency("Total", "₱")
+        rownames = FALSE,
+        class = 'cell-border stripe hover'
+      )
     }, error = function(e) {
       showNotification(paste("Failed to load order history:", e$message), type = "error")
       return(datatable(
@@ -3066,9 +3277,9 @@ server <- function(input, output, session){
     tryCatch({
       orders <- dbGetQueryPool(
         "SELECT order_id, total_price, created_at, status 
-         FROM orders 
-         WHERE customer_id = ? AND status IN ('Completed', 'Cancelled')
-         ORDER BY created_at DESC",
+       FROM orders 
+       WHERE customer_id = ? AND status IN ('Completed', 'Cancelled')
+       ORDER BY datetime(created_at, 'localtime') DESC",
         params = list(user_data$user_id)
       )
       
@@ -3077,58 +3288,82 @@ server <- function(input, output, session){
       order <- orders[selected, ]
       track_id <- paste0("SOS", sprintf("%03d", order$order_id))
       
+      # Format date and total
+      order$formatted_date <- format_date(order$created_at)
+      order$formatted_total <- format_currency(order$total_price)
+      
       # Get order items
       order_items <- dbGetQueryPool(
         "SELECT s.name, oi.quantity, oi.color, oi.size, oi.price 
-         FROM order_items oi 
-         JOIN shoes s ON oi.shoe_id = s.shoe_id 
-         WHERE oi.order_id = ?",
+       FROM order_items oi 
+       JOIN shoes s ON oi.shoe_id = s.shoe_id 
+       WHERE oi.order_id = ?",
         params = list(order$order_id)
       )
       
       # Create order summary HTML
       order_summary <- tags$div(
         class = "order-summary",
-        h4(paste("Order Details -", track_id)),
+        h4(paste("Order Details -", track_id), style = "color: #2c3e50; margin-bottom: 15px;"),
         hr(),
         p(strong("Status: "), 
           tags$span(order$status, 
                     class = paste0("status-", tolower(order$status), "-badge"))),
-        p(strong("Date: "), order$created_at),
-        p(strong("Total: "), paste0("₱", sprintf("%.2f", order$total_price))),
+        p(strong("Date: "), order$formatted_date),
+        p(strong("Total: "), order$formatted_total),
         br()
       )
       
       # Create items table
       if(nrow(order_items) > 0) {
-        order_items$Total <- order_items$price * order_items$quantity
+        # Format order items
+        order_items$formatted_price <- format_currency(order_items$price)
+        order_items$formatted_total <- format_currency(order_items$price * order_items$quantity)
+        order_items$formatted_quantity <- format_number(order_items$quantity, digits = 0)
         
         items_html <- datatable(
-          order_items[, c("name", "quantity", "color", "size", "price", "Total")],
+          order_items[, c("name", "formatted_quantity", "color", "size", "formatted_price", "formatted_total")],
           colnames = c("Product", "Qty", "Color", "Size", "Price", "Total"),
           options = list(
             pageLength = 5,
             dom = 't',
-            ordering = FALSE
+            ordering = FALSE,
+            scrollX = FALSE,
+            columnDefs = list(
+              list(className = 'dt-center', targets = '_all'),
+              list(width = '200px', targets = 0),  # Product
+              list(width = '80px', targets = 1),   # Qty
+              list(width = '100px', targets = 2),  # Color
+              list(width = '80px', targets = 3),   # Size
+              list(width = '100px', targets = 4),  # Price
+              list(width = '100px', targets = 5)   # Total
+            )
           ),
-          rownames = FALSE
-        ) %>%
-          formatCurrency(c("price", "Total"), "₱")
+          rownames = FALSE,
+          class = 'cell-border stripe hover'
+        )
         
         # Show modal with details
-        showModal(modalDialog(
+        showModal(myModalDialog(
           title = tags$div(
             icon("receipt"),
             paste("Order History -", track_id)
           ),
           order_summary,
-          tags$h5("Items:"),
+          tags$h5("Items:", style = "color: #2c3e50; margin-top: 15px;"),
           DTOutput("history_order_items"),
           footer = modalButton("Close"),
           size = "l",
           easyClose = TRUE,
           class = "order-history-modal"
         ))
+        runjs("
+        setTimeout(function() {
+          $('.modal').css('display', 'flex');
+          $('.modal').css('align-items', 'center');
+          $('.modal').css('justify-content', 'center');
+        }, 100);
+      ")
         
         # Render the items table
         output$history_order_items <- renderDT({
@@ -3145,6 +3380,7 @@ server <- function(input, output, session){
     input$mark_completed
     input$mark_cancelled
     invalidateLater(10000)
+    apply_status_styles()
     
     return(list(timestamp = Sys.time()))
   })
@@ -3156,13 +3392,14 @@ server <- function(input, output, session){
     tryCatch({
       total <- dbGetQueryPool("SELECT COUNT(*) as count FROM orders")$count
       total <- ifelse(is.na(total), 0, total)
+      formatted_total <- format_number(total, digits = 0)
     }, error = function(e) {
-      total <- 0
+      formatted_total <- "0"
     })
     
     dashboard_box(
       icon_name = "shopping-bag",
-      value = format(total, big.mark = ","),
+      value = formatted_total,  # USE FORMATTED NUMBER
       label = "Total Orders",
       gradient = "background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);"
     )
@@ -3174,13 +3411,14 @@ server <- function(input, output, session){
     tryCatch({
       pending <- dbGetQueryPool("SELECT COUNT(*) as count FROM orders WHERE status = 'Pending'")$count
       pending <- ifelse(is.na(pending), 0, pending)
+      formatted_pending <- formatC(pending, format = "d", big.mark = ",")
     }, error = function(e) {
-      pending <- 0
+      formatted_pending <- "0"
     })
     
     dashboard_box(
       icon_name = "clock",
-      value = format(pending, big.mark = ","),
+      value = formatted_pending,  # USE FORMATTED NUMBER
       label = "Pending Orders",
       gradient = "background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);"
     )
@@ -3192,13 +3430,14 @@ server <- function(input, output, session){
     tryCatch({
       sales <- dbGetQueryPool("SELECT SUM(total_price) as total FROM orders WHERE status = 'Completed'")$total
       sales <- ifelse(is.na(sales), 0, sales)
+      formatted_sales <- paste0("₱", formatC(sales, format = "f", big.mark = ",", digits = 2))
     }, error = function(e) {
-      sales <- 0
+      formatted_sales <- "₱0.00"
     })
     
     dashboard_box(
       icon_name = "money-bill-wave",
-      value = paste0("₱", format(round(sales, 2), nsmall = 2)),
+      value = formatted_sales,  # USE FORMATTED NUMBER
       label = "Total Sales",
       gradient = "background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);"
     )
@@ -3210,13 +3449,14 @@ server <- function(input, output, session){
     tryCatch({
       stock <- dbGetQueryPool("SELECT SUM(stock) as total FROM shoes")$total
       stock <- ifelse(is.na(stock), 0, stock)
+      formatted_stock <- formatC(stock, format = "d", big.mark = ",")
     }, error = function(e) {
-      stock <- 0
+      formatted_stock <- "0"
     })
     
     dashboard_box(
       icon_name = "boxes",
-      value = format(stock, big.mark = ","),
+      value = formatted_stock,  # USE FORMATTED NUMBER
       label = "Total Stock",
       gradient = "background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);"
     )
@@ -3272,7 +3512,8 @@ server <- function(input, output, session){
         
         ggplot(sales_data, aes(x = date, y = daily_sales)) +
           geom_bar(stat = "identity", fill = "#1abc9c", width = 0.7) +
-          geom_text(aes(label = paste0("₱", round(daily_sales, 2))), 
+          # In the sales plot renderPlot, update geom_text label:
+          geom_text(aes(label = format_currency(daily_sales)), 
                     vjust = -0.5, size = 3.5, fontface = "bold") +
           labs(title = "Last 14 Days Sales Performance", 
                x = "Date", 
@@ -3306,34 +3547,40 @@ server <- function(input, output, session){
     })
   })
   
-  # --------------------- Staff Orders Management (ACTIVE ONLY) ---------------------
   staff_orders_data <- reactive({
     input$refresh_staff_orders
     input$mark_processing
+    input$mark_to_ship
+    input$mark_shipped
     input$mark_completed
     input$mark_cancelled
     
     tryCatch({
-      # Only show active orders (Pending/Processing)
+      # Only show active orders (Pending/Processing/To Ship/Shipped)
       orders <- dbGetQueryPool("
-        SELECT o.*, u.username 
-        FROM orders o 
-        JOIN users u ON o.customer_id = u.user_id 
-        WHERE o.status NOT IN ('Completed', 'Cancelled')
-        ORDER BY 
-          CASE o.status 
-            WHEN 'Pending' THEN 1 
-            WHEN 'Processing' THEN 2 
-            ELSE 3 
-          END,
-          o.created_at DESC")
+      SELECT o.*, u.username 
+      FROM orders o 
+      JOIN users u ON o.customer_id = u.user_id 
+      WHERE o.status NOT IN ('Completed', 'Cancelled')
+      ORDER BY 
+        CASE o.status 
+          WHEN 'Pending' THEN 1 
+          WHEN 'Processing' THEN 2 
+          WHEN 'To Ship' THEN 3
+          WHEN 'Shipped' THEN 4
+          ELSE 5 
+        END,
+        o.created_at DESC")
       
       if(nrow(orders) > 0){
         orders$status_formatted <- sapply(orders$status, function(s){
-          paste0("<span class='status-", tolower(s), "-badge'>", s, "</span>")
+          paste0("<span class='status-", tolower(gsub(" ", "-", s)), "-badge'>", s, "</span>")
         })
         
         orders$track_id <- paste0("SOS", sprintf("%03d", orders$order_id))
+        # Format date and total
+        orders$formatted_date <- sapply(orders$created_at, format_date)
+        orders$formatted_total <- format_currency(orders$total_price)
       }
       
       return(orders)
@@ -3343,38 +3590,52 @@ server <- function(input, output, session){
     })
   })
   
-  observeEvent(input$refresh_staff_orders, {
-    showNotification("Orders refreshed", type = "message", duration = 2)
-  })
-  
+  # --------------------- Staff Orders Management (ACTIVE ONLY) ---------------------
   output$staff_orders_table <- renderDT({
     orders <- staff_orders_data()
     
     if(is.null(orders) || nrow(orders) == 0){
       return(datatable(
         data.frame(Message = "No active orders to manage"), 
-        options = list(dom = 't', ordering = FALSE),
+        options = list(
+          dom = 't', 
+          ordering = FALSE
+        ),
+        selection = 'none',
         rownames = FALSE
       ))
     }
     
-    display <- orders[, c("track_id", "username", "total_price", "created_at", "status_formatted")]
-    colnames(display) <- c("Track ID", "Customer", "Total", "Date", "Status")
+    # Use formatted columns with proper dates
+    display <- data.frame(
+      "Track ID" = orders$track_id,
+      "Customer" = orders$username,
+      "Total" = orders$formatted_total,
+      "Date" = orders$formatted_date,
+      "Status" = orders$status_formatted,
+      stringsAsFactors = FALSE
+    )
     
     datatable(
       display, 
-      selection = 'single',
       escape = FALSE,
+      selection = 'single',
       options = list(
         pageLength = 10, 
         dom = 'tip',
+        scrollX = FALSE,
         columnDefs = list(
-          list(className = 'dt-center', targets = '_all')
+          list(className = 'dt-center', targets = '_all'),
+          list(width = '120px', targets = 0), # Track ID
+          list(width = '150px', targets = 1), # Customer
+          list(width = '120px', targets = 2), # Total
+          list(width = '180px', targets = 3), # Date
+          list(width = '120px', targets = 4)  # Status
         )
       ),
-      rownames = FALSE
-    ) %>%
-      formatCurrency("Total", "₱")
+      rownames = FALSE,
+      class = 'cell-border stripe hover'  # Standard table class
+    )
   })
   
   output$staff_order_actions <- renderUI({
@@ -3388,14 +3649,23 @@ server <- function(input, output, session){
     )
     
     order <- staff_orders_data()[selected, ]
+    current_status <- order$status
+    
+    # Determine which buttons to show based on current status
+    show_processing <- current_status == "Pending"
+    show_to_ship <- current_status == "Processing"
+    show_shipped <- current_status == "To Ship"
+    show_completed <- current_status == "Shipped"
+    show_cancelled <- current_status %in% c("Pending", "Processing")  # Only allow cancellation before shipping
+    
     
     # Get order items
     order_items <- tryCatch({
       dbGetQueryPool(
         "SELECT s.name, oi.quantity, oi.color, oi.size, oi.price 
-         FROM order_items oi 
-         JOIN shoes s ON oi.shoe_id = s.shoe_id 
-         WHERE oi.order_id = ?",
+     FROM order_items oi 
+     JOIN shoes s ON oi.shoe_id = s.shoe_id 
+     WHERE oi.order_id = ?",
         params = list(order$order_id)
       )
     }, error = function(e) {
@@ -3411,10 +3681,10 @@ server <- function(input, output, session){
                p(icon("hashtag"), strong(" Track ID: "), 
                  tags$span(order$track_id, class = "track-id-badge")),
                p(icon("user"), strong(" Customer: "), order$username),
-               p(icon("money-bill-wave"), strong(" Total: "), paste0("₱", sprintf("%.2f", order$total_price))),
-               p(icon("calendar"), strong(" Date: "), order$created_at),
+               p(icon("money-bill-wave"), strong(" Total: "), format_currency(order$total_price)),
+               p(icon("calendar"), strong(" Date: "), format_date(order$created_at)),
                p(icon("info-circle"), strong(" Current Status: "), 
-                 tags$span(order$status, class = paste0("status-", tolower(order$status), "-badge"))),
+                 tags$span(order$status, class = paste0("status-", tolower(gsub(" ", "-", order$status)), "-badge"))),
                
                # Order Items Section
                if(nrow(order_items) > 0) {
@@ -3429,12 +3699,18 @@ server <- function(input, output, session){
                },
                
                br(),
-               actionButton("mark_processing", icon("cogs"), "Mark as Processing", 
-                            class = "btn-theme", style = "margin-right:10px; background-color: #3498db;"),
-               actionButton("mark_completed", icon("check-circle"), "Mark as Completed", 
-                            class = "btn-theme", style = "margin-right:10px; background-color: #27ae60;"),
-               actionButton("mark_cancelled", icon("times-circle"), "Cancel Order", 
-                            class = "btn-theme", style = "background-color: #e74c3c;")
+               div(class = "status-buttons-container",
+                   if(show_processing) actionButton("mark_processing", icon("cogs"), "Mark as Processing", 
+                                                    class = "btn-theme", style = "margin-right:10px; background-color: #3498db;"),
+                   if(show_to_ship) actionButton("mark_to_ship", icon("shipping-fast"), "Mark as To Ship", 
+                                                 class = "btn-theme", style = "margin-right:10px; background-color: #9b59b6;"),
+                   if(show_shipped) actionButton("mark_shipped", icon("truck"), "Mark as Shipped", 
+                                                 class = "btn-theme", style = "margin-right:10px; background-color: #1abc9c;"),
+                   if(show_completed) actionButton("mark_completed", icon("check-circle"), "Mark as Completed", 
+                                                   class = "btn-theme", style = "margin-right:10px; background-color: #27ae60;"),
+                   if(show_cancelled) actionButton("mark_cancelled", icon("times-circle"), "Cancel Order", 
+                                                   class = "btn-theme", style = "background-color: #e74c3c;")
+               )
              )
       )
     )
@@ -3495,6 +3771,46 @@ server <- function(input, output, session){
         )), 
         type = "message",
         duration = 3
+      )
+    }, error = function(e) {
+      showNotification(paste("Failed to update order status:", e$message), type = "error")
+    })
+  })
+  
+  observeEvent(input$mark_to_ship, {
+    selected <- input$staff_orders_table_rows_selected
+    if(length(selected) == 0) return()
+    
+    order <- staff_orders_data()[selected, ]
+    tryCatch({
+      dbExecutePool(
+        "UPDATE orders SET status = 'To Ship', updated_at = datetime('now') WHERE order_id = ?",
+        params = list(order$order_id)
+      )
+      show_notification(
+        paste("Order", order$track_id, "has been marked as 'To Ship'."),
+        "success",
+        duration = 3000
+      )
+    }, error = function(e) {
+      showNotification(paste("Failed to update order status:", e$message), type = "error")
+    })
+  })
+  
+  observeEvent(input$mark_shipped, {
+    selected <- input$staff_orders_table_rows_selected
+    if(length(selected) == 0) return()
+    
+    order <- staff_orders_data()[selected, ]
+    tryCatch({
+      dbExecutePool(
+        "UPDATE orders SET status = 'Shipped', updated_at = datetime('now') WHERE order_id = ?",
+        params = list(order$order_id)
+      )
+      show_notification(
+        paste("Order", order$track_id, "has been marked as 'Shipped'."),
+        "success",
+        duration = 3000
       )
     }, error = function(e) {
       showNotification(paste("Failed to update order status:", e$message), type = "error")
@@ -3667,14 +3983,14 @@ server <- function(input, output, session){
           paste0("edit_", id), 
           icon("edit"), " Edit",
           class = "btn-theme btn-sm",
-          style = "margin-right: 5px; background-color: #f39c12;",
+          style = "margin-right: 5px; background-color: #f39c12; font-size: 12px; padding: 4px 10px;",
           onclick = sprintf("Shiny.setInputValue('edit_shoe', %d, {priority:'event'})", id)
         )),
         as.character(actionButton(
           paste0("delete_", id), 
           icon("trash"), " Delete",
           class = "btn-theme btn-sm",
-          style = "background-color: #e74c3c;",
+          style = "background-color: #e74c3c; font-size: 12px; padding: 4px 10px;",
           onclick = sprintf("Shiny.setInputValue('delete_shoe', %d, {priority:'event'})", id)
         ))
       )
@@ -3684,6 +4000,10 @@ server <- function(input, output, session){
                               "<span style='color:#27ae60; font-weight:bold;'>Yes</span>", 
                               "<span style='color:#e74c3c; font-weight:bold;'>No</span>")
     
+    # Format stock with commas
+    shoes$formatted_stock <- format_number(shoes$stock, digits = 0)
+    shoes$formatted_price <- format_currency(shoes$price)
+    
     # Add row count information
     if(!is.null(input$inventory_search) && nchar(input$inventory_search) > 0) {
       message <- paste("Showing", nrow(shoes), "shoes matching:", input$inventory_search)
@@ -3691,8 +4011,17 @@ server <- function(input, output, session){
       message <- paste("Total shoes:", nrow(shoes))
     }
     
-    display <- shoes[, c("shoe_id", "name", "price", "stock", "colors", "sizes", "available", "actions")]
-    colnames(display) <- c("ID", "Name", "Price", "Stock", "Colors", "Sizes", "Available", "Actions")
+    display <- data.frame(
+      "ID" = shoes$shoe_id,
+      "Name" = shoes$name,
+      "Price" = shoes$formatted_price,
+      "Stock" = shoes$formatted_stock,
+      "Colors" = shoes$colors,
+      "Sizes" = shoes$sizes,
+      "Available" = shoes$available,
+      "Actions" = shoes$actions,
+      stringsAsFactors = FALSE
+    )
     
     datatable(
       display,
@@ -3702,20 +4031,28 @@ server <- function(input, output, session){
       options = list(
         pageLength = 10, 
         dom = 'tip',
-        stateSave = TRUE,  # FIX: Save table state (pagination, sorting)
-        stateDuration = 60 * 60 * 24,  # Save state for 24 hours
+        scrollX = FALSE,
         columnDefs = list(
-          list(className = 'dt-center', targets = c(0, 2, 3, 6, 7))
+          list(className = 'dt-center', targets = c(0, 2, 3, 6, 7)),
+          list(width = '80px', targets = 0),   # ID
+          list(width = '200px', targets = 1),  # Name
+          list(width = '100px', targets = 2),  # Price
+          list(width = '80px', targets = 3),   # Stock
+          list(width = '150px', targets = 4),  # Colors
+          list(width = '150px', targets = 5),  # Sizes
+          list(width = '100px', targets = 6),  # Available
+          list(width = '150px', targets = 7)   # Actions
         )
       ),
-      rownames = FALSE
-    ) %>%
-      formatCurrency("Price", "₱")
+      rownames = FALSE,
+      class = 'cell-border stripe hover'  # Standard table class
+    )
   })
   
   # --------------------- Staff Shoes CRUD ---------------------
+  
   observeEvent(input$add_shoe_btn, {
-    showModal(modalDialog(
+    showModal(myModalDialog(
       title = tags$h4(icon("plus-circle"), " Add New Shoe"),
       textInput("new_shoe_name", tags$label("Shoe Name", `for` = "new_shoe_name"), 
                 placeholder = "e.g., Nike Air Max"),
@@ -3724,11 +4061,20 @@ server <- function(input, output, session){
       numericInput("new_shoe_stock", tags$label("Initial Stock", `for` = "new_shoe_stock"), 
                    value = 50, min = 0),
       textInput("new_shoe_colors", tags$label("Available Colors (comma separated)", `for` = "new_shoe_colors"), 
-                value = "Black,White,Blue,Red"),
+                placeholder = "Black,White,Blue,Red"),
       textInput("new_shoe_sizes", tags$label("Available Sizes (comma separated)", `for` = "new_shoe_sizes"), 
-                value = "7,8,9,10,11,12"),
-      fileInput("new_shoe_image", "Upload Shoe Image", 
-                accept = c("image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp")),
+                placeholder = "7,8,9,10,11,12"),
+      # REPLACED FILE UPLOAD WITH URL INPUT
+      textInput("new_shoe_image_url", tags$label("Image URL", `for` = "new_shoe_image_url"), 
+                value = "",  # Start empty
+                placeholder = "https://example.com/shoe-image.jpg"),
+      tags$div(
+        style = "margin: 10px 0; padding: 10px; background: #f8f9fa; border-radius: 8px;",
+        icon("info-circle"),
+        tags$span(" Enter full image URL starting with http:// or https://", style = "margin-left: 10px;"),
+        br(),
+        tags$small("Leave empty to use default shoe image", style = "color: #666;")
+      ),
       selectInput("new_shoe_available", "Available for Purchase", 
                   choices = c("Yes" = "1", "No" = "0"), 
                   selected = "1"),
@@ -3738,33 +4084,44 @@ server <- function(input, output, session){
       ),
       size = "l"
     ))
+    runjs("
+      setTimeout(function() {
+        Shiny.setInputValue('fix_modal_centering', Math.random());
+      }, 100);
+    ")
   })
   
   observeEvent(input$save_new_shoe, {
     req(input$new_shoe_name, input$new_shoe_price, input$new_shoe_stock)
     
     if(nchar(trimws(input$new_shoe_name)) == 0){
-      showNotification("Shoe name cannot be empty", type = "error")
+      show_notification("Shoe name cannot be empty", "error")
       return()
     }
     
-    if(input$new_shoe_price <= 0) {
-      showNotification("Price must be greater than 0", type = "error")
+    if(is.null(input$new_shoe_price) || input$new_shoe_price <= 0) {
+      show_notification("Price must be greater than 0", "error")
       return()
     }
     
-    if(input$new_shoe_stock < 0) {
-      showNotification("Stock cannot be negative", type = "error")
+    if(is.null(input$new_shoe_stock) || input$new_shoe_stock < 0) {
+      show_notification("Stock cannot be negative", "error")
       return()
     }
     
     tryCatch({
-      # Get next shoe_id for image naming
-      last_id <- dbGetQueryPool("SELECT MAX(shoe_id) as max_id FROM shoes")$max_id
-      new_shoe_id <- ifelse(is.na(last_id), 1, last_id + 1)
-      
-      image_path <- if(!is.null(input$new_shoe_image) && file.exists(input$new_shoe_image$datapath)) {
-        save_uploaded_image(input$new_shoe_image, shoe_id = new_shoe_id)
+      # Handle image URL - REPLACED FILE UPLOAD LOGIC
+      image_path <- if(!is.null(input$new_shoe_image_url) && 
+                       nchar(trimws(input$new_shoe_image_url)) > 0) {
+        url <- trimws(input$new_shoe_image_url)
+        # Validate URL format
+        if(grepl("^https?://", url)) {
+          url
+        } else {
+          show_notification("Please enter a valid URL starting with http:// or https://", 
+                            "warning")
+          "default_shoe_image.jpg"
+        }
       } else {
         "default_shoe_image.jpg"
       }
@@ -3772,26 +4129,28 @@ server <- function(input, output, session){
       available_value <- ifelse(input$new_shoe_available == "1", 1, 0)
       
       dbExecutePool("
-        INSERT INTO shoes (name, price, stock, colors, sizes, image, available) 
-        VALUES (?, ?, ?, ?, ?, ?, ?)",
+      INSERT INTO shoes (name, price, stock, colors, sizes, image, available) 
+      VALUES (?, ?, ?, ?, ?, ?, ?)",
                     params = list(
                       trimws(input$new_shoe_name),
                       as.numeric(input$new_shoe_price),
                       as.numeric(input$new_shoe_stock),
-                      trimws(input$new_shoe_colors),
-                      trimws(input$new_shoe_sizes),
+                      trimws(ifelse(is.null(input$new_shoe_colors) || input$new_shoe_colors == "", 
+                                    "Black,White,Blue", input$new_shoe_colors)),
+                      trimws(ifelse(is.null(input$new_shoe_sizes) || input$new_shoe_sizes == "", 
+                                    "7,8,9,10", input$new_shoe_sizes)),
                       image_path,
                       available_value
                     ))
       
       removeModal()
-      showNotification("Shoe added successfully!", type = "message")
+      show_notification("Shoe added successfully!", "success", wait_for_modal = TRUE)
       
       # Refresh the shoes table
       refresh_trigger$shoes <- refresh_trigger$shoes + 1
       
     }, error = function(e){
-      showNotification(paste("Error adding shoe:", e$message), type = "error")
+      show_notification(paste("Error adding shoe:", e$message), "error")
     })
   })
   
@@ -3805,7 +4164,14 @@ server <- function(input, output, session){
         session$userData$current_image <- shoe$image
         session$userData$editing_shoe_id <- shoe_id
         
-        showModal(modalDialog(
+        # Determine if current image is a URL or local file
+        current_image_value <- if(grepl("^https?://", shoe$image)) {
+          shoe$image
+        } else {
+          ""
+        }
+        
+        showModal(myModalDialog(
           title = tags$h4(icon("edit"), " Edit Shoe"),
           textInput("edit_shoe_name", tags$label("Shoe Name", `for` = "edit_shoe_name"), value = shoe$name),
           numericInput("edit_shoe_price", tags$label("Price (₱)", `for` = "edit_shoe_price"), 
@@ -3819,11 +4185,18 @@ server <- function(input, output, session){
           tags$p(strong("Current Image:")),
           tags$img(src = get_image_path(shoe$image), 
                    class = "preview-image",
-                   style = "max-width: 200px; max-height: 150px;",
+                   style = "max-width: 200px; max-height: 150px; margin-bottom: 15px;",
                    onerror = "this.onerror=null; this.src='default_shoe_image.jpg'"),
           br(),
-          fileInput("edit_shoe_image", "Upload New Image (Optional)", 
-                    accept = c("image/png", "image/jpeg", "image/jpg", "image/gif", "image/webp")),
+          # REPLACED FILE UPLOAD WITH URL INPUT
+          textInput("edit_shoe_image_url", "New Image URL (Optional)", 
+                    value = current_image_value,
+                    placeholder = "https://example.com/new-image.jpg"),
+          tags$div(
+            style = "margin: 5px 0 15px 0; padding: 8px; background: #f8f9fa; border-radius: 5px;",
+            icon("info-circle", style = "color: #666;"),
+            tags$span(" Leave empty to keep current image", style = "margin-left: 8px; color: #666; font-size: 12px;")
+          ),
           selectInput("edit_shoe_available", "Available for Purchase", 
                       choices = c("Yes" = "1", "No" = "0"), 
                       selected = as.character(shoe$available)),
@@ -3833,9 +4206,14 @@ server <- function(input, output, session){
           ),
           size = "l"
         ))
+        runjs("
+          setTimeout(function() {
+            Shiny.setInputValue('fix_modal_centering', Math.random());
+          }, 100);
+        ")
       }
     }, error = function(e) {
-      showNotification(paste("Failed to load shoe details:", e$message), type = "error")
+      show_notification(paste("Failed to load shoe details:", e$message), "error")
     })
   })
   
@@ -3843,24 +4221,32 @@ server <- function(input, output, session){
     req(session$userData$editing_shoe_id)
     
     if(nchar(trimws(input$edit_shoe_name)) == 0){
-      showNotification("Shoe name cannot be empty", type = "error")
+      show_notification("Shoe name cannot be empty", "error")
       return()
     }
     
     if(input$edit_shoe_price <= 0) {
-      showNotification("Price must be greater than 0", type = "error")
+      show_notification("Price must be greater than 0", "error")
       return()
     }
     
     if(input$edit_shoe_stock < 0) {
-      showNotification("Stock cannot be negative", type = "error")
+      show_notification("Stock cannot be negative", "error")
       return()
     }
     
     tryCatch({
-      image_path <- if(!is.null(input$edit_shoe_image) && 
-                       file.exists(input$edit_shoe_image$datapath)) {
-        save_uploaded_image(input$edit_shoe_image, shoe_id = session$userData$editing_shoe_id)
+      # Handle image URL - REPLACED FILE UPLOAD LOGIC
+      image_path <- if(!is.null(input$edit_shoe_image_url) && 
+                       nchar(trimws(input$edit_shoe_image_url)) > 0) {
+        url <- trimws(input$edit_shoe_image_url)
+        if(grepl("^https?://", url)) {
+          url
+        } else {
+          show_notification("Please enter a valid URL starting with http:// or https://", 
+                            "warning")
+          session$userData$current_image
+        }
       } else {
         session$userData$current_image
       }
@@ -3883,14 +4269,14 @@ server <- function(input, output, session){
                     ))
       
       removeModal()
-      showNotification("Shoe updated successfully!", type = "message")
+      show_notification("Shoe updated successfully!", "success", wait_for_modal = TRUE)
       session$userData$editing_shoe_id <- NULL
       
       # Refresh the shoes table
       refresh_trigger$shoes <- refresh_trigger$shoes + 1
       
     }, error = function(e){
-      showNotification(paste("Error updating shoe:", e$message), type = "error")
+      show_notification(paste("Error updating shoe:", e$message), "error")
     })
   })
   
@@ -3905,7 +4291,7 @@ server <- function(input, output, session){
       session$userData$deleting_shoe_id <- shoe_id
       session$userData$deleting_shoe_name <- shoe$name
       
-      showModal(modalDialog(
+      showModal(myModalDialog(
         title = tags$h4(icon("exclamation-triangle"), " Confirm Deletion"),
         tags$div(
           style = "text-align:center;",
@@ -3923,16 +4309,39 @@ server <- function(input, output, session){
           textInput("confirm_shoe_name", NULL, placeholder = "Enter shoe name")
         ),
         footer = tagList(
-          modalButton("Cancel"),
+          actionButton("cancel_delete_shoe", "Cancel", 
+                       class = "btn-theme",
+                       style = "background: linear-gradient(135deg, #6c757d, #495057);"),
           actionButton("final_delete_shoe", "Delete Permanently", 
                        class = "btn-theme",
                        style = "background-color: #e74c3c;",
                        disabled = TRUE)
         )
       ))
+      runjs("
+  setTimeout(function() {
+    // Fix modal centering
+    $('.modal').css('display', 'flex');
+    $('.modal').css('align-items', 'center');
+    $('.modal').css('justify-content', 'center');
+    
+    // Fix logout tab scrolling
+    $('#logout_tab, #staff_logout_tab').css({
+      'max-height': 'calc(100vh - 200px)',
+      'overflow-y': 'auto'
+    });
+  }, 100);
+")
     }, error = function(e) {
       showNotification(paste("Failed to load shoe details:", e$message), type = "error")
     })
+  })
+  
+  # Add this observer for cancel delete shoe
+  observeEvent(input$cancel_delete_shoe, {
+    removeModal()
+    session$userData$deleting_shoe_id <- NULL
+    session$userData$deleting_shoe_name <- NULL
   })
   
   # Enable delete button only when name matches
@@ -3998,11 +4407,11 @@ server <- function(input, output, session){
     
     tryCatch({
       orders <- dbGetQueryPool("
-        SELECT o.*, u.username 
-        FROM orders o 
-        JOIN users u ON o.customer_id = u.user_id 
-        WHERE o.status IN ('Completed', 'Cancelled')
-        ORDER BY o.created_at DESC")
+      SELECT o.*, u.username 
+      FROM orders o 
+      JOIN users u ON o.customer_id = u.user_id 
+      WHERE o.status IN ('Completed', 'Cancelled')
+      ORDER BY o.created_at DESC")
       
       if(nrow(orders) == 0){
         return(datatable(
@@ -4013,13 +4422,22 @@ server <- function(input, output, session){
       }
       
       orders$status_formatted <- sapply(orders$status, function(s){
-        paste0("<span class='status-", tolower(s), "-badge'>", s, "</span>")
+        paste0("<span class='status-", tolower(gsub(" ", "-", s)), "-badge'>", s, "</span>")
       })
       
       orders$track_id <- paste0("SOS", sprintf("%03d", orders$order_id))
+      # Format date and total
+      orders$formatted_date <- sapply(orders$created_at, format_date)
+      orders$formatted_total <- format_currency(orders$total_price)
       
-      display <- orders[, c("track_id", "username", "total_price", "created_at", "status_formatted")]
-      colnames(display) <- c("Track ID", "Customer", "Total", "Date", "Status")
+      display <- data.frame(
+        "Track ID" = orders$track_id,
+        "Customer" = orders$username,
+        "Total" = orders$formatted_total,
+        "Date" = orders$formatted_date,
+        "Status" = orders$status_formatted,
+        stringsAsFactors = FALSE
+      )
       
       datatable(
         display, 
@@ -4028,13 +4446,19 @@ server <- function(input, output, session){
         options = list(
           pageLength = 10, 
           dom = 'tip',
+          scrollX = FALSE,
           columnDefs = list(
-            list(className = 'dt-center', targets = '_all')
+            list(className = 'dt-center', targets = '_all'),
+            list(width = '120px', targets = 0), # Track ID
+            list(width = '150px', targets = 1), # Customer
+            list(width = '120px', targets = 2), # Total
+            list(width = '180px', targets = 3), # Date
+            list(width = '120px', targets = 4)  # Status
           )
         ),
-        rownames = FALSE
-      ) %>%
-        formatCurrency("Total", "₱")
+        rownames = FALSE,
+        class = 'cell-border stripe hover'
+      )
     }, error = function(e) {
       showNotification(paste("Failed to load completed orders:", e$message), type = "error")
       return(datatable(
@@ -4052,70 +4476,94 @@ server <- function(input, output, session){
     
     tryCatch({
       orders <- dbGetQueryPool("
-        SELECT o.*, u.username 
-        FROM orders o 
-        JOIN users u ON o.customer_id = u.user_id 
-        WHERE o.status IN ('Completed', 'Cancelled')
-        ORDER BY o.created_at DESC")
+      SELECT o.*, u.username 
+      FROM orders o 
+      JOIN users u ON o.customer_id = u.user_id 
+      WHERE o.status IN ('Completed', 'Cancelled')
+      ORDER BY o.created_at DESC")
       
       if(nrow(orders) == 0) return()
       
       order <- orders[selected, ]
       track_id <- paste0("SOS", sprintf("%03d", order$order_id))
       
+      # Format date and total
+      order$formatted_date <- format_date(order$created_at)
+      order$formatted_total <- format_currency(order$total_price)
+      
       # Get order items
       order_items <- dbGetQueryPool(
         "SELECT s.name, oi.quantity, oi.color, oi.size, oi.price 
-         FROM order_items oi 
-         JOIN shoes s ON oi.shoe_id = s.shoe_id 
-         WHERE oi.order_id = ?",
+       FROM order_items oi 
+       JOIN shoes s ON oi.shoe_id = s.shoe_id 
+       WHERE oi.order_id = ?",
         params = list(order$order_id)
       )
       
       # Create order summary HTML
       order_summary <- tags$div(
         class = "order-summary",
-        h4(paste("Order Details -", track_id)),
+        h4(paste("Order Details -", track_id), style = "color: #2c3e50; margin-bottom: 15px;"),
         hr(),
         p(strong("Customer: "), order$username),
         p(strong("Status: "), 
           tags$span(order$status, 
                     class = paste0("status-", tolower(order$status), "-badge"))),
-        p(strong("Date: "), order$created_at),
-        p(strong("Total: "), paste0("₱", sprintf("%.2f", order$total_price))),
+        p(strong("Date: "), order$formatted_date),
+        p(strong("Total: "), order$formatted_total),
         br()
       )
       
       # Create items table
       if(nrow(order_items) > 0) {
-        order_items$Total <- order_items$price * order_items$quantity
+        # Format order items
+        order_items$formatted_price <- format_currency(order_items$price)
+        order_items$formatted_total <- format_currency(order_items$price * order_items$quantity)
+        order_items$formatted_quantity <- format_number(order_items$quantity, digits = 0)
         
         items_html <- datatable(
-          order_items[, c("name", "quantity", "color", "size", "price", "Total")],
+          order_items[, c("name", "formatted_quantity", "color", "size", "formatted_price", "formatted_total")],
           colnames = c("Product", "Qty", "Color", "Size", "Price", "Total"),
           options = list(
             pageLength = 5,
             dom = 't',
-            ordering = FALSE
+            ordering = FALSE,
+            scrollX = FALSE,
+            columnDefs = list(
+              list(className = 'dt-center', targets = '_all'),
+              list(width = '200px', targets = 0),  # Product
+              list(width = '80px', targets = 1),   # Qty
+              list(width = '100px', targets = 2),  # Color
+              list(width = '80px', targets = 3),   # Size
+              list(width = '100px', targets = 4),  # Price
+              list(width = '100px', targets = 5)   # Total
+            )
           ),
-          rownames = FALSE
-        ) %>%
-          formatCurrency(c("price", "Total"), "₱")
+          rownames = FALSE,
+          class = 'cell-border stripe hover'
+        )
         
         # Show modal with details
-        showModal(modalDialog(
+        showModal(myModalDialog(
           title = tags$div(
             icon("receipt"),
             paste("Order History -", track_id)
           ),
           order_summary,
-          tags$h5("Items:"),
+          tags$h5("Items:", style = "color: #2c3e50; margin-top: 15px;"),
           DTOutput("staff_history_order_items"),
           footer = modalButton("Close"),
           size = "l",
           easyClose = TRUE,
           class = "order-history-modal"
         ))
+        runjs("
+        setTimeout(function() {
+          $('.modal').css('display', 'flex');
+          $('.modal').css('align-items', 'center');
+          $('.modal').css('justify-content', 'center');
+        }, 100);
+      ")
         
         # Render the items table
         output$staff_history_order_items <- renderDT({
@@ -4137,6 +4585,8 @@ server <- function(input, output, session){
     updateDateInput(session, "sales_end_date", value = Sys.Date())
     sales_report_trigger(sales_report_trigger() + 1)
   })
+  
+  
   
   output$staff_sales <- renderDT({
     req(user_data$logged_in && user_data$role == "Staff")
@@ -4323,7 +4773,7 @@ server <- function(input, output, session){
                      fill = "Orders"), 
                  stat = "identity", alpha = 0.3) +
         scale_y_continuous(
-          name = "Revenue ($)",
+          name = "Revenue (₱)",
           sec.axis = sec_axis(~./mean(sales$Daily_Revenue/sales$Daily_Orders, na.rm = TRUE), 
                               name = "Number of Orders")
         ) +
@@ -4363,12 +4813,15 @@ server <- function(input, output, session){
     })
   })
   
+  
+  
   # --------------------- Cleanup Preview Files ---------------------
   observe({
     invalidateLater(3600000) # Every hour
     cleanup_preview_files()
     cleanup_orphaned_images()
   })
+  
   
   # --------------------- Session Timeout Warning ---------------------
   observe({
@@ -4395,3 +4848,4 @@ server <- function(input, output, session){
 
 # --------------------- Run App ---------------------
 shinyApp(ui, server)
+
