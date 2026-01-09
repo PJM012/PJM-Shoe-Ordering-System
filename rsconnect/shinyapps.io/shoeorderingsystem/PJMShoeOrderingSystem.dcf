@@ -1,0 +1,12 @@
+name: PJMShoeOrderingSystem
+title: PJMShoeOrderingSystem
+username: shoeorderingsystem
+account: shoeorderingsystem
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 16395979
+bundleId: 11420659
+url: https://shoeorderingsystem.shinyapps.io/PJMShoeOrderingSystem/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE

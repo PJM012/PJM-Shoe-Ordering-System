@@ -1,4 +1,3 @@
-
 library(shiny)
 library(shinyWidgets)
 library(shinyjs)
@@ -15,12 +14,63 @@ icon <- function(name, ...) {
 }
 
 # --------------------- Database Setup ---------------------
-db_pool <- dbPool(
-  drv = RSQLite::SQLite(),
-  dbname = "shoe_ordering.sqlite3",
-  minSize = 1,
-  maxSize = 10
-)
+# --------------------- ENHANCED DATABASE POOL MANAGEMENT ---------------------
+# Global variable to store pool
+.pool <- NULL
+
+# Safe function to get or create pool
+get_pool <- function() {
+  # If pool doesn't exist or is invalid, create new one
+  if (is.null(.pool) || !dbIsValid(.pool)) {
+    # Close old pool if it exists but is invalid
+    if (!is.null(.pool)) {
+      tryCatch({
+        poolClose(.pool)
+      }, error = function(e) {
+        # Silent fail on close error
+      })
+    }
+    
+    # Create new pool with better settings
+    .pool <<- dbPool(
+      drv = RSQLite::SQLite(),
+      dbname = "shoe_ordering.sqlite3",
+      minSize = 1,
+      maxSize = 5,  # Reduced for better stability
+      idleTimeout = 3600000,  # 1 hour
+      validationInterval = 30000  # Validate every 30 seconds
+    )
+    
+    message("Database pool created/recreated")
+  }
+  
+  return(.pool)
+}
+
+# Test pool connection
+test_pool_connection <- function() {
+  tryCatch({
+    pool <- get_pool()
+    conn <- poolCheckout(pool)
+    on.exit(poolReturn(conn))
+    
+    # Simple test query
+    dbGetQuery(conn, "SELECT 1 as test")
+    return(TRUE)
+  }, error = function(e) {
+    message("Pool test failed: ", e$message)
+    # Force recreation on next call
+    if (!is.null(.pool)) {
+      try(poolClose(.pool), silent = TRUE)
+      .pool <<- NULL
+    }
+    return(FALSE)
+  })
+}
+
+# Initialize pool at startup
+message("Initializing database pool...")
+test_pool_connection()
 
 # Password hashing function
 simple_hash <- function(text) {
@@ -46,7 +96,6 @@ get_next_status <- function(current_status) {
          "Shipped" = ORDER_STATUSES$COMPLETED,
          current_status)
 }
-# Add these functions near other helper functions (around line 200)
 
 # Function to format date properly - UPDATED FIXED VERSION
 # Function to format date properly - FIXED CONSISTENT FORMAT
@@ -104,82 +153,117 @@ format_currency <- function(x, symbol = "₱") {
   return(x)
 }
 
-# Function to format date properly - UPDATED
-format_date <- function(date_str) {
-  tryCatch({
-    # Parse the date and convert to local timezone
-    if(grepl("^\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}$", date_str)) {
-      # Already in correct format, just ensure timezone
-      dt <- as.POSIXct(date_str, tz = "UTC")
-      format(dt, "%Y-%m-%d %I:%M:%S %p", tz = Sys.timezone())
-    } else {
-      # Try to parse various formats
-      dt <- as.POSIXct(date_str, tz = "UTC")
-      if(is.na(dt)) {
-        dt <- as.POSIXct(date_str)
-      }
-      format(dt, "%Y-%m-%d %I:%M:%S %p", tz = Sys.timezone())
-    }
-  }, error = function(e) {
-    return(date_str)
-  })
-}
-
 # Add this near other helper functions (around line 200)
 myModalDialog <- function(..., options = list(backdrop = 'static', keyboard = FALSE)) {
   modalDialog(..., options = options)
 }
 
-# Database helper functions with safety wrapper
-safe_db_operation <- function(operation) {
-  conn <- poolCheckout(db_pool)
-  on.exit({
-    tryCatch({
-      poolReturn(conn)
-    }, error = function(e) {
-      warning("Failed to return connection to pool: ", e$message)
-    })
-  })
+# --------------------- SAFE DATABASE OPERATIONS ---------------------
+# Enhanced dbGetQuery with automatic retry
+dbGetQueryPool <- function(sql, params = NULL, max_retries = 2) {
+  attempt <- 1
   
-  tryCatch({
-    operation(conn)
-  }, error = function(e) {
-    stop(paste("Database operation failed:", e$message))
-  })
+  while (attempt <= max_retries) {
+    tryCatch({
+      pool <- get_pool()
+      conn <- poolCheckout(pool)
+      on.exit({
+        tryCatch({
+          poolReturn(conn)
+        }, error = function(e) {
+          # If return fails, close the connection
+          try(dbDisconnect(conn), silent = TRUE)
+        })
+      })
+      
+      if (is.null(params)) {
+        result <- dbGetQuery(conn, sql)
+      } else {
+        result <- dbGetQuery(conn, sql, params = params)
+      }
+      
+      return(result)
+      
+    }, error = function(e) {
+      error_msg <- e$message
+      
+      # Check if pool is closed
+      if (grepl("pool has been closed|Connection is closed", error_msg, ignore.case = TRUE)) {
+        if (attempt < max_retries) {
+          message(sprintf("Pool error detected (attempt %d/%d). Recreating pool...", 
+                          attempt, max_retries))
+          
+          # Force pool recreation
+          if (!is.null(.pool)) {
+            try(poolClose(.pool), silent = TRUE)
+          }
+          .pool <<- NULL
+          
+          attempt <- attempt + 1
+          Sys.sleep(0.5)  # Brief delay before retry
+          next  # Retry
+        } else {
+          stop("Database query failed after retries: ", error_msg)
+        }
+      } else {
+        # Other database errors
+        stop("Database query error: ", error_msg)
+      }
+    })
+  }
 }
 
-dbExecutePool <- function(sql, params = NULL) {
-  tryCatch({
-    conn <- poolCheckout(db_pool)
-    on.exit(poolReturn(conn))
-    
-    if (is.null(params)) {
-      dbExecute(conn, sql)
-    } else {
-      dbExecute(conn, sql, params = params)
-    }
-  }, error = function(e) {
-    stop(paste("Database execute error:", e$message))
-  })
+# Enhanced dbExecute with automatic retry
+dbExecutePool <- function(sql, params = NULL, max_retries = 2) {
+  attempt <- 1
+  
+  while (attempt <= max_retries) {
+    tryCatch({
+      pool <- get_pool()
+      conn <- poolCheckout(pool)
+      on.exit({
+        tryCatch({
+          poolReturn(conn)
+        }, error = function(e) {
+          try(dbDisconnect(conn), silent = TRUE)
+        })
+      })
+      
+      if (is.null(params)) {
+        result <- dbExecute(conn, sql)
+      } else {
+        result <- dbExecute(conn, sql, params = params)
+      }
+      
+      return(result)
+      
+    }, error = function(e) {
+      error_msg <- e$message
+      
+      if (grepl("pool has been closed|Connection is closed", error_msg, ignore.case = TRUE)) {
+        if (attempt < max_retries) {
+          message(sprintf("Pool execute error (attempt %d/%d). Recreating pool...", 
+                          attempt, max_retries))
+          
+          if (!is.null(.pool)) {
+            try(poolClose(.pool), silent = TRUE)
+          }
+          .pool <<- NULL
+          
+          attempt <- attempt + 1
+          Sys.sleep(0.5)
+          next
+        } else {
+          stop("Database execute failed after retries: ", error_msg)
+        }
+      } else {
+        stop("Database execute error: ", error_msg)
+      }
+    })
+  }
 }
 
-dbGetQueryPool <- function(sql, params = NULL) {
-  tryCatch({
-    conn <- poolCheckout(db_pool)
-    on.exit(poolReturn(conn))
-    
-    if (is.null(params)) {
-      result <- dbGetQuery(conn, sql)
-    } else {
-      result <- dbGetQuery(conn, sql, params = params)
-    }
-    return(result)
-  }, error = function(e) {
-    stop(paste("Database query error:", e$message))
-  })
-}
-
-# Cached query function
+# Simple cached query (optional)
 cached_query <- function(sql, params = NULL, cache_time = 300) {
   cache_key <- paste0(sql, paste(params, collapse = ""))
   cache_file <- paste0("cache_", digest::digest(cache_key), ".rds")
@@ -327,7 +411,7 @@ get_or_create_user_cart <- function(user_id) {
 
 save_cart_to_db <- function(user_id, cart_items) {
   tryCatch({
-    conn <- poolCheckout(db_pool)
+    conn <- poolCheckout(get_pool())
     on.exit(poolReturn(conn))
     
     dbExecute(conn, "BEGIN TRANSACTION")
@@ -764,7 +848,7 @@ dashboard_box <- function(icon_name, value, label, gradient = "background: linea
     
     div(
       style = "text-align: center; margin-bottom: 10px;",
-      shiny::icon(icon_name, style = "font-size: 40px; opacity: 0.9;")
+      shiny::icon(icon_name, style = "font-size: 40px; opacity = 0.9;")
     ),
     
     div(
@@ -867,10 +951,10 @@ ui <- fluidPage(
   hidden(div(id = "main_container", uiOutput("main_ui")))
 )
 
-server <- function(input, output, session){
-  session_start_time <- reactiveVal(Sys.time())
+# --------------------- SERVER ---------------------
+server <- function(input, output, session) {
   
-  # Reactive values
+  # ========== NOTIFICATION SYSTEM ==========
   user_data <- reactiveValues(
     logged_in = FALSE,
     role = NULL,
@@ -881,14 +965,68 @@ server <- function(input, output, session){
     modal_open = FALSE,
     cart_trigger = 0,
     is_logging_out = FALSE,
-    is_logging_in = FALSE,  
+    is_logging_in = FALSE,
     session_initialized = FALSE,
     show_logout_modal = FALSE
   )
   
-  # ========== ENHANCED NOTIFICATION SYSTEM WITH QUEUING ==========
-  # Queue for notifications to show after modal close
+  # Notification queue for handling modal conflicts
   notification_queue <- reactiveVal(list())
+  
+  render_login_ui <- function() {
+    # Clear any existing modal first
+    removeModal()
+    
+    # Reset the is_logging_out flag after a short delay
+    if (user_data$is_logging_out) {
+      delay(500, {
+        user_data$is_logging_out <- FALSE
+      })
+    }
+    
+    output$login_ui <- renderUI({
+      tags$div(
+        class = "login-box",
+        style = "text-align: center;",
+        tags$div(
+          class = "login-title-container",
+          icon("shoe-prints", style = "font-size: 36px;"),
+          h2("PJM SHOE ORDERING SYSTEM", style = "color:#2c3e50; margin:0;")
+        ),
+        p("Welcome! Please select your login option", style = "color:#666; margin:30px 0;"),
+        
+        tags$div(
+          class = "login-buttons-container",
+          actionButton("login_cust", 
+                       tags$div(
+                         icon("user", style = "margin-right:10px;"),
+                         "Login as Customer"
+                       ), 
+                       width = '100%', 
+                       class = "btn-theme", 
+                       style = "margin-bottom:15px; height:50px; font-size:16px;"),
+          
+          actionButton("login_staff", 
+                       tags$div(
+                         icon("user-tie", style = "margin-right:10px;"),
+                         "Login as Staff"
+                       ), 
+                       width = '100%', 
+                       class = "btn-theme", 
+                       style = "margin-bottom:15px; height:50px; font-size:16px;"),
+          
+          actionButton("register_btn", 
+                       tags$div(
+                         icon("user-plus", style = "margin-right:10px;"),
+                         "Register an Account"
+                       ), 
+                       width = '100%', 
+                       class = "btn-theme", 
+                       style = "height:50px; font-size:16px;")
+        )
+      )
+    })
+  }
   
   # Function to show toast notifications with queuing
   show_notification <- function(message, type = "success", duration = 3000, wait_for_modal = FALSE) {
@@ -998,11 +1136,6 @@ server <- function(input, output, session){
     )
   }
   
-  # Function to send number formatting message
-  format_dashboard_numbers <- function() {
-    session$sendCustomMessage("formatNumbers", list())
-  }
-  
   # Observe cart changes for notifications
   observe({
     # Trigger when cart changes
@@ -1044,57 +1177,55 @@ server <- function(input, output, session){
   # Order refresh trigger
   order_refresh_trigger <- reactiveVal(0)
   
-  # --------------------- Login UI ---------------------
-  render_login_ui <- function() {
-    output$login_ui <- renderUI({
+  # --------------------- Initial Login UI ---------------------
+  # Initial Login UI
+  output$login_ui <- renderUI({
+    tags$div(
+      class = "login-box",
+      style = "text-align: center;",
       tags$div(
-        class = "login-box",
-        style = "text-align: center;",
-        tags$div(
-          class = "login-title-container",
-          icon("shoe-prints", style = "font-size: 36px;"),
-          h2("PJM SHOE ORDERING SYSTEM", style = "color:#2c3e50; margin:0;")
-        ),
-        p("Welcome! Please select your login option", style = "color:#666; margin:30px 0;"),
+        class = "login-title-container",
+        icon("shoe-prints", style = "font-size: 36px;"),
+        h2("PJM SHOE ORDERING SYSTEM", style = "color:#2c3e50; margin:0;")
+      ),
+      p("Welcome! Please select your login option", style = "color:#666; margin:30px 0;"),
+      
+      tags$div(
+        class = "login-buttons-container",
+        actionButton("login_cust", 
+                     tags$div(
+                       icon("user", style = "margin-right:10px;"),
+                       "Login as Customer"
+                     ), 
+                     width = '100%', 
+                     class = "btn-theme", 
+                     style = "margin-bottom:15px; height:50px; font-size:16px;"),
         
-        tags$div(
-          class = "login-buttons-container",
-          actionButton("login_cust", 
-                       tags$div(
-                         icon("user", style = "margin-right:10px;"),
-                         "Login as Customer"
-                       ), 
-                       width = '100%', 
-                       class = "btn-theme", 
-                       style = "margin-bottom:15px; height:50px; font-size:16px;"),
-          
-          actionButton("login_staff", 
-                       tags$div(
-                         icon("user-tie", style = "margin-right:10px;"),
-                         "Login as Staff"
-                       ), 
-                       width = '100%', 
-                       class = "btn-theme", 
-                       style = "margin-bottom:15px; height:50px; font-size:16px;"),
-          
-          actionButton("register_btn", 
-                       tags$div(
-                         icon("user-plus", style = "margin-right:10px;"),
-                         "Register an Account"
-                       ), 
-                       width = '100%', 
-                       class = "btn-theme", 
-                       style = "height:50px; font-size:16px;")
-        )
+        actionButton("login_staff", 
+                     tags$div(
+                       icon("user-tie", style = "margin-right:10px;"),
+                       "Login as Staff"
+                     ), 
+                     width = '100%', 
+                     class = "btn-theme", 
+                     style = "margin-bottom:15px; height:50px; font-size:16px;"),
+        
+        actionButton("register_btn", 
+                     tags$div(
+                       icon("user-plus", style = "margin-right:10px;"),
+                       "Register an Account"
+                     ), 
+                     width = '100%', 
+                     class = "btn-theme", 
+                     style = "height:50px; font-size:16px;")
       )
-    })
-    
-    output$main_ui <- renderUI({ NULL })
-    shinyjs::hide("main_container")
-    shinyjs::show("login_container")
-  }
+    )
+  })
   
-  render_login_ui()
+  output$main_ui <- renderUI({ NULL })
+  shinyjs::hide("main_container")
+  shinyjs::show("login_container")
+  
   
   observeEvent(input$register_btn, {
     output$login_ui <- renderUI({
@@ -1490,6 +1621,7 @@ server <- function(input, output, session){
     req(input$cust_user, input$cust_pass)
     
     tryCatch({
+      test <- dbGetQueryPool("SELECT 1 as test")
       res <- dbGetQueryPool(
         "SELECT * FROM users WHERE username = ? AND password = ? AND role = 'Customer'",
         params = list(trimws(input$cust_user), simple_hash(input$cust_pass))
@@ -1650,7 +1782,7 @@ server <- function(input, output, session){
           user_data$is_logging_in <- FALSE
         })
         
-        show_notification(paste("Welcome back, ", user_data$username, "!", sep = ""), "success")
+        show_notification(paste("Welcome, ", user_data$username, "!", sep = ""), "success")
         
       } else {
         showModal(myModalDialog(
@@ -1685,6 +1817,7 @@ server <- function(input, output, session){
     req(input$staff_user, input$staff_pass)
     
     tryCatch({
+      test <- dbGetQueryPool("SELECT 1 as test")
       res <- dbGetQueryPool(
         "SELECT * FROM users WHERE username = ? AND password = ? AND role = 'Staff'",
         params = list(trimws(input$staff_user), simple_hash(input$staff_pass))
@@ -1938,11 +2071,15 @@ server <- function(input, output, session){
     )
   })
   
-  # --------------------- Logout Handlers ---------------------
+  # Update the cleanup_user_session function in the server section:
   cleanup_user_session <- function(show_message = TRUE) {
     # Save cart if it exists
     if (user_data$logged_in && length(user_data$cart) > 0) {
-      save_cart_to_db(user_data$user_id, user_data$cart)
+      tryCatch({
+        save_cart_to_db(user_data$user_id, user_data$cart)
+      }, error = function(e) {
+        # Silent fail on logout
+      })
     }
     
     # Reset all reactive values
@@ -1954,7 +2091,10 @@ server <- function(input, output, session){
     user_data$modal_shoe <- NULL
     user_data$modal_open <- FALSE
     user_data$cart_trigger <- 0
-    user_data$is_logging_out <- FALSE
+    user_data$is_logging_out <- TRUE  # Set this flag
+    user_data$is_logging_in <- FALSE
+    user_data$session_initialized <- FALSE
+    user_data$show_logout_modal <- FALSE
     
     # Reset modal state
     modal_state$is_open <- FALSE
@@ -1966,11 +2106,6 @@ server <- function(input, output, session){
     session$userData$editing_shoe_id <- NULL
     session$userData$deleting_shoe_id <- NULL
     session$userData$current_image <- NULL
-    session$sendCustomMessage("forceCSSReload", list())
-    
-    delay(100, {
-      session$sendCustomMessage("refreshCSS", list())
-    })
     
     # Reset refresh triggers
     refresh_trigger$shoes <- 0
@@ -1985,7 +2120,12 @@ server <- function(input, output, session){
     
     # Only show message if explicitly requested
     if (show_message) {
-      show_notification("Logged out successfully", "message", duration = 3)
+      # Use delay to ensure UI is ready
+      delay(100, {
+        showNotification("Logged out successfully", 
+                         type = "message", 
+                         duration = 3)
+      })
     }
   }
   
@@ -2011,24 +2151,39 @@ server <- function(input, output, session){
     ))
   })
   
+  # Update the customer logout handler:
   observeEvent(input$confirm_logout_customer, {
     removeModal()
-    # Set logout flag
+    
+    # Set logging out flag
     user_data$is_logging_out <- TRUE
     
-    # Don't show message here, will be shown after redirect
-    cleanup_user_session(show_message = FALSE)
-    
-    # Clear main UI
+    # Clear main UI first
     output$main_ui <- renderUI({ NULL })
     shinyjs::hide("main_container")
     
-    # Show login UI
-    render_login_ui()
+    # IMPORTANT: Reset the navbar page selection
+    updateNavbarPage(session, "customer_nav", selected = "Home")
     
-    # Show ONE notification
-    showNotification("Logged out successfully. See you next time!", 
-                     type = "message", duration = 3)
+    # Clear any remaining modals
+    removeModal()
+    
+    # Reset reactive values
+    user_data$logged_in <- FALSE
+    user_data$role <- NULL
+    user_data$user_id <- NULL
+    user_data$username <- NULL
+    user_data$cart <- list()
+    user_data$cart_trigger <- user_data$cart_trigger + 1
+    
+    # Force re-render login UI
+    render_login_ui()
+    shinyjs::show("login_container")
+    
+    # Show notification after UI is ready
+    delay(300, {
+      showNotification("Logged out successfully", type = "message", duration = 3)
+    })
   })
   
   # Staff logout modal
@@ -2052,20 +2207,28 @@ server <- function(input, output, session){
     ))
   })
   
+  # Update the staff logout handler:
   observeEvent(input$confirm_logout_staff, {
     removeModal()
+    
     # Don't show message here, will be shown after redirect
     cleanup_user_session(show_message = FALSE)
     
-    # Clear main UI
+    # Clear main UI first
     output$main_ui <- renderUI({ NULL })
     shinyjs::hide("main_container")
     
-    # Show login UI
-    render_login_ui()
+    # IMPORTANT: Reset the navbar page selection
+    updateNavbarPage(session, "staff_nav", selected = "Dashboard")
     
-    # Show ONE notification
-    showNotification("Logged out successfully", type = "message", duration = 3)
+    # Force re-render login UI
+    render_login_ui()
+    shinyjs::show("login_container")
+    
+    # Show notification after UI is ready
+    delay(300, {
+      showNotification("Logged out successfully", type = "message", duration = 3)
+    })
   })
   
   # Handle cancel from customer logout tab
@@ -2079,9 +2242,6 @@ server <- function(input, output, session){
   })
   
   observeEvent(input$logout_from_tab, {
-    # Set logout flag
-    user_data$is_logging_out <- TRUE
-    
     # Don't show message here, will be shown after redirect
     cleanup_user_session(show_message = FALSE)
     
@@ -2089,12 +2249,18 @@ server <- function(input, output, session){
     output$main_ui <- renderUI({ NULL })
     shinyjs::hide("main_container")
     
+    # Reset navbar
+    updateNavbarPage(session, "customer_nav", selected = "Home")
+    
     # Show login UI
     render_login_ui()
+    shinyjs::show("login_container")
     
-    # Show ONE notification
-    showNotification("Logged out successfully. See you next time!", 
-                     type = "message", duration = 3)
+    # Show notification after UI is ready
+    delay(300, {
+      showNotification("Logged out successfully. See you next time!", 
+                       type = "message", duration = 3)
+    })
   })
   
   observeEvent(input$staff_logout_from_tab, {
@@ -2105,11 +2271,17 @@ server <- function(input, output, session){
     output$main_ui <- renderUI({ NULL })
     shinyjs::hide("main_container")
     
+    # Reset navbar
+    updateNavbarPage(session, "staff_nav", selected = "Dashboard")
+    
     # Show login UI
     render_login_ui()
+    shinyjs::show("login_container")
     
-    # Show ONE notification
-    showNotification("Logged out successfully", type = "message", duration = 3)
+    # Show notification after UI is ready
+    delay(300, {
+      showNotification("Logged out successfully", type = "message", duration = 3)
+    })
   })
   
   # --------------------- Cart Functions ---------------------
@@ -2735,7 +2907,7 @@ server <- function(input, output, session){
     
     total <- sum(sapply(user_data$cart, function(x) as.numeric(x$price) * as.numeric(x$quantity)))
     
-    conn <- poolCheckout(db_pool)
+    conn <- poolCheckout(get_pool())
     dbExecute(conn, "BEGIN TRANSACTION")
     
     tryCatch({
@@ -2857,8 +3029,7 @@ server <- function(input, output, session){
   
   # --------------------- Customer Orders (ACTIVE ONLY) ---------------------
   order_refresh_trigger <- reactiveVal(0)
-  # Update the customer_orders_data reactive to include the trigger
-  # --------------------- Customer Orders (ACTIVE ONLY) ---------------------
+  
   customer_orders_data <- reactive({
     # Add dependencies
     input$cancel_order
@@ -3005,7 +3176,7 @@ server <- function(input, output, session){
   observeEvent(input$confirm_cancel, {
     order_id <- input$cancel_order
     
-    conn <- poolCheckout(db_pool)
+    conn <- poolCheckout(get_pool())
     dbExecute(conn, "BEGIN TRANSACTION")
     
     tryCatch({
@@ -3198,9 +3369,6 @@ server <- function(input, output, session){
     })
     apply_status_styles()
   })
-  
-  # Apply status badge styles
-  session$sendCustomMessage("applyStatusStyles", list())
   
   output$customer_completed <- renderDT({
     tryCatch({
@@ -3512,7 +3680,6 @@ server <- function(input, output, session){
         
         ggplot(sales_data, aes(x = date, y = daily_sales)) +
           geom_bar(stat = "identity", fill = "#1abc9c", width = 0.7) +
-          # In the sales plot renderPlot, update geom_text label:
           geom_text(aes(label = format_currency(daily_sales)), 
                     vjust = -0.5, size = 3.5, fontface = "bold") +
           labs(title = "Last 14 Days Sales Performance", 
@@ -3823,7 +3990,7 @@ server <- function(input, output, session){
     
     order <- staff_orders_data()[selected, ]
     
-    conn <- poolCheckout(db_pool)
+    conn <- poolCheckout(get_pool())
     dbExecute(conn, "BEGIN TRANSACTION")
     
     tryCatch({
@@ -3869,7 +4036,7 @@ server <- function(input, output, session){
     
     order <- staff_orders_data()[selected, ]
     
-    conn <- poolCheckout(db_pool)
+    conn <- poolCheckout(get_pool())
     dbExecute(conn, "BEGIN TRANSACTION")
     
     tryCatch({
@@ -3949,7 +4116,7 @@ server <- function(input, output, session){
       showNotification(paste("Failed to load shoes:", e$message), type = "error")
       return(data.frame())
     })
-  }) %>% debounce(500)
+  })
   
   # Add manual refresh trigger
   observeEvent(input$refresh_shoes_btn, {
@@ -4586,8 +4753,6 @@ server <- function(input, output, session){
     sales_report_trigger(sales_report_trigger() + 1)
   })
   
-  
-  
   output$staff_sales <- renderDT({
     req(user_data$logged_in && user_data$role == "Staff")
     
@@ -4624,7 +4789,7 @@ server <- function(input, output, session){
       }
       
       # Use separate connection for better performance
-      conn <- poolCheckout(db_pool)
+      conn <- poolCheckout(get_pool())
       on.exit(poolReturn(conn))
       
       # Optimized query with explicit date handling
@@ -4737,7 +4902,7 @@ server <- function(input, output, session){
       }
       
       # Use cached connection
-      conn <- poolCheckout(db_pool)
+      conn <- poolCheckout(get_pool())
       on.exit(poolReturn(conn))
       
       query <- "
@@ -4813,8 +4978,6 @@ server <- function(input, output, session){
     })
   })
   
-  
-  
   # --------------------- Cleanup Preview Files ---------------------
   observe({
     invalidateLater(3600000) # Every hour
@@ -4842,10 +5005,45 @@ server <- function(input, output, session){
     # Clean up preview files on session end
     cleanup_preview_files()
     cleanup_orphaned_images()
-    poolClose(db_pool)
+    
+    # Use get_pool() instead of direct db_pool access
+    tryCatch({
+      pool <- get_pool()
+      if(!is.null(pool) && dbIsValid(pool)) {
+        # Don't close pool here - it's managed globally
+        # Just return connection
+        poolReturn(poolCheckout(pool))
+      }
+    }, error = function(e) {
+      # Silent error
+    })
   })
 }
 
+# --------------------- GLOBAL CLEANUP ---------------------
+# This runs when the ENTIRE app stops (all sessions)
+onStop(function() {
+  message("Shiny app stopping...")
+  
+  # Close the global pool when ALL sessions are done
+  if (!is.null(.pool)) {
+    tryCatch({
+      message("Closing database pool...")
+      poolClose(.pool)
+    }, error = function(e) {
+      message("Error closing pool: ", e$message)
+    })
+    .pool <<- NULL
+  }
+  
+  # Clean up cache files
+  cache_files <- list.files(pattern = "^cache_.*\\.rds$")
+  if (length(cache_files) > 0) {
+    file.remove(cache_files)
+  }
+  
+  message("Cleanup completed.")
+})
+
 # --------------------- Run App ---------------------
 shinyApp(ui, server)
-
